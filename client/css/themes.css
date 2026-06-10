@@ -1,0 +1,82 @@
+/* ═══════════════════════════════════════
+   CONNECT - THEMES (Dark / Light)
+   ═══════════════════════════════════════ */
+
+/* Theme: Dark (Default) */
+[data-theme="dark"] {
+  --bg-dark: #0a0a1a;
+  --bg-surface: #12122a;
+  --bg-card: #1a1a35;
+  --bg-card-hover: #222245;
+  --text-primary: #f0f0ff;
+  --text-secondary: #a0a0cc;
+  --text-muted: #6a6a9a;
+  --border: rgba(255,255,255,0.08);
+  --border-focus: rgba(0,212,255,0.4);
+}
+
+/* Theme: Light */
+[data-theme="light"] {
+  --bg-dark: #f0f2f5;
+  --bg-surface: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f5f5fa;
+  --text-primary: #1a1a2e;
+  --text-secondary: #4a4a6a;
+  --text-muted: #8888aa;
+  --border: rgba(0,0,0,0.1);
+  --border-focus: rgba(0,150,200,0.4);
+}
+
+/* Light Theme Overrides */
+[data-theme="light"] .app-header {
+  background: rgba(240,242,245,0.95);
+  box-shadow: 0 1px 10px rgba(0,0,0,0.05);
+}
+
+[data-theme="light"] .bottom-nav {
+  background: rgba(255,255,255,0.95);
+  box-shadow: 0 -1px 10px rgba(0,0,0,0.05);
+}
+
+[data-theme="light"] .toast {
+  background: #ffffff;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+[data-theme="light"] .network-card {
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+
+[data-theme="light"] .chat-input-area {
+  background: #ffffff;
+}
+
+[data-theme="light"] .chat-input-wrapper {
+  background: #f5f5fa;
+  border-color: rgba(0,0,0,0.1);
+}
+
+[data-theme="light"] .call-modal {
+  background: rgba(255,255,255,0.9);
+  color: #1a1a2e;
+}
+
+[data-theme="light"] .call-status {
+  color: #4a4a6a;
+}
+
+/* Theme Auto - Respects OS Preference */
+@media (prefers-color-scheme: light) {
+  [data-theme="auto"] {
+    --bg-dark: #f0f2f5;
+    --bg-surface: #ffffff;
+    --bg-card: #ffffff;
+    --bg-card-hover: #f5f5fa;
+    --text-primary: #1a1a2e;
+    --text-secondary: #4a4a6a;
+    --text-muted: #8888aa;
+    --border: rgba(0,0,0,0.1);
+    --border-focus: rgba(0,150,200,0.4);
+  }
+}

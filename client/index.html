@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>Connect</title>
+  
+  <!-- PWA Meta -->
+  <meta name="theme-color" content="#0a0a1a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/assets/icons/icon-192.png">
+  
+  <!-- Styles -->
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/themes.css">
+  <link rel="stylesheet" href="/css/animations.css">
+  <link rel="stylesheet" href="/css/responsive.css">
+</head>
+<body>
+  <!-- Particle Background -->
+  <canvas id="particle-canvas"></canvas>
+
+  <div class="app-container">
+    
+    <!-- Active Call Bar -->
+    <div id="active-call-bar" class="call-bar hidden">
+      <span class="call-bar-avatar">📞</span>
+      <span class="call-bar-name">Voice Call Active</span>
+      <span id="call-timer">00:00</span>
+      <button id="end-call-btn" class="btn-end-call">End Call</button>
+    </div>
+
+    <!-- Main Header -->
+    <header class="app-header" id="main-header">
+      <div class="header-status" id="header-status" title="Connection Info">
+        <span class="status-dot offline" id="header-status-dot"></span>
+        <span id="header-status-text">Disconnected</span>
+      </div>
+      <div class="header-title">Connect</div>
+      <button class="header-btn" id="install-btn" style="display:none" aria-label="Install App">
+        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+      </button>
+    </header>
+
+    <main class="app-main">
+      
+      <!-- PAGE: SETUP -->
+      <section id="setup" class="page">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h2 style="font-size: 1.5rem; font-weight: 700;">Set up Connect</h2>
+          <p class="text-muted text-sm mt-sm">Create your local profile</p>
+        </div>
+        
+        <form id="setup-form">
+          <input type="hidden" id="setup-mode" value="create">
+          
+          <div class="form-group">
+            <label>Avatar</label>
+            <div class="avatar-grid" id="setup-avatars">
+              <div class="avatar-option selected">😎</div>
+              <div class="avatar-option">🚀</div>
+              <div class="avatar-option">🦊</div>
+              <div class="avatar-option">🐱</div>
+              <div class="avatar-option">🦁</div>
+              <div class="avatar-option">🐼</div>
+              <div class="avatar-option">🦄</div>
+              <div class="avatar-option">🐉</div>
+              <div class="avatar-option">🎮</div>
+              <div class="avatar-option">🎯</div>
+              <div class="avatar-option">⚡</div>
+              <div class="avatar-option">🔥</div>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label>Color</label>
+            <div class="color-grid" id="setup-colors">
+              <div class="color-option selected" data-color="#00d4ff" style="background:#00d4ff"></div>
+              <div class="color-option" data-color="#7b2fff" style="background:#7b2fff"></div>
+              <div class="color-option" data-color="#ff6b35" style="background:#ff6b35"></div>
+              <div class="color-option" data-color="#00ff88" style="background:#00ff88"></div>
+              <div class="color-option" data-color="#ff4488" style="background:#ff4488"></div>
+              <div class="color-option" data-color="#ffcc00" style="background:#ffcc00"></div>
+              <div class="color-option" data-color="#ff4444" style="background:#ff4444"></div>
+              <div class="color-option" data-color="#44aaff" style="background:#44aaff"></div>
+            </div>
+          </div>
+          
+          <div class="form-group">
+            <label for="setup-name">Display Name</label>
+            <input type="text" id="setup-name" required placeholder="Your Name" maxlength="20">
+          </div>
+          
+          <div class="form-group">
+            <label for="setup-status">Status (optional)</label>
+            <input type="text" id="setup-status" placeholder="What's up?" maxlength="100">
+          </div>
+          
+          <div class="form-group" id="setup-server-group">
+            <label for="setup-server">Host Network Address</label>
+            <input type="url" id="setup-server" required placeholder="e.g. http://192.168.1.5:3000">
+            <p class="text-sm text-muted mt-sm">Leave as is if you scanned a QR code or are the host.</p>
+          </div>
+          
+          <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 16px;">Get Started →</button>
+        </form>
+      </section>
+
+      <!-- PAGE: HOME -->
+      <section id="home" class="page active">
+        <div class="flex-between" style="margin-bottom: 24px;">
+          <h2 style="font-size: 1.5rem;">Rooms</h2>
+          <button id="create-room-btn" class="btn btn-primary" style="padding: 8px 16px; font-size: 0.8125rem;">+ Create Room</button>
+        </div>
+        
+        <div id="rooms-list" class="card-grid">
+          <!-- Rooms injected here -->
+        </div>
+      </section>
+
+      <!-- PAGE: CHAT -->
+      <section id="chat" class="page" style="padding: 0;">
+        <div class="chat-header">
+          <button class="header-btn" onclick="app._navigateTo('home')" aria-label="Back">
+            <svg viewBox="0 0 24 24"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
+          </button>
+          <div style="flex: 1">
+            <div id="chat-room-name" style="font-weight: 600; font-size: 1rem;">Room</div>
+            <div style="font-size: 0.75rem; color: var(--text-muted);"><span id="chat-member-count">1</span> members</div>
+          </div>
+          <button class="header-btn" id="location-btn" aria-label="Share Location">
+            <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+          </button>
+        </div>
+        
+        <div class="chat-messages" id="chat-messages">
+          <!-- Messages injected here -->
+        </div>
+        
+        <div class="chat-input-area">
+          <input type="file" id="file-input" style="display:none">
+          <button class="input-btn" id="attach-btn" aria-label="Attach File">📎</button>
+          
+          <div class="chat-input-wrapper">
+            <textarea id="chat-input" placeholder="Type a message..." rows="1"></textarea>
+            <div class="input-actions">
+              <button class="input-btn" id="emoji-btn" aria-label="Emoji">😊</button>
+              <button class="input-btn" id="mic-btn" aria-label="Voice Message">🎤</button>
+            </div>
+            <div id="typing-indicator" class="hidden"></div>
+          </div>
+          
+          <button class="send-btn" id="send-btn" disabled aria-label="Send">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+          </button>
+          
+          <!-- Voice Recording Overlay -->
+          <div id="recording-ui" class="recording-ui hidden">
+            <div style="display: flex; align-items: center; gap: 12px; color: var(--error)">
+              <div class="record-pulse"></div>
+              <span>Recording... Slide left to cancel</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE: PROFILE & MEMBERS -->
+      <section id="profile" class="page">
+        <div id="profile-content">
+          <!-- Profile injected here -->
+        </div>
+        
+        <div class="glass-card mt-sm">
+          <h4 style="margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:8px">Room Members</h4>
+          <div id="members-list" class="card-grid">
+            <!-- Members injected here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE: SETTINGS -->
+      <section id="settings" class="page">
+        <h2 style="font-size: 1.5rem; margin-bottom: 20px;">Settings</h2>
+        
+        <div class="glass-card mb-sm">
+          <h4 style="margin-bottom:12px; color:var(--text-secondary)">Appearance</h4>
+          
+          <div class="flex-between" style="margin-bottom: 16px;">
+            <span>Theme</span>
+            <select class="setting-select" data-setting="theme" style="width: auto; padding: 8px;">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+              <option value="auto">System Auto</option>
+            </select>
+          </div>
+          
+          <div class="flex-between" style="margin-bottom: 16px;">
+            <span>Accent Color</span>
+            <select class="setting-select" data-setting="accent" style="width: auto; padding: 8px;">
+              <option value="cyan">Cyan</option>
+              <option value="purple">Purple</option>
+              <option value="orange">Orange</option>
+            </select>
+          </div>
+          
+          <div class="flex-between">
+            <span>Font Size</span>
+            <select class="setting-select" data-setting="fontSize" style="width: auto; padding: 8px;">
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+            </select>
+          </div>
+        </div>
+        
+        <div class="glass-card" style="margin-top:16px">
+          <h4 style="margin-bottom:12px; color:var(--text-secondary)">Notifications & Sound</h4>
+          
+          <div class="flex-between" style="margin-bottom: 16px;">
+            <span>Sound Effects</span>
+            <label class="toggle-switch">
+              <input type="checkbox" class="setting-toggle" data-setting="sounds">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          
+          <div class="flex-between" style="margin-bottom: 16px;">
+            <span>Vibration</span>
+            <label class="toggle-switch">
+              <input type="checkbox" class="setting-toggle" data-setting="vibration">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+
+          <div class="flex-between">
+            <span>Browser Notifications</span>
+            <label class="toggle-switch">
+              <input type="checkbox" class="setting-toggle" data-setting="notifications">
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+        </div>
+
+        <div class="glass-card" style="margin-top:16px">
+          <h4 style="margin-bottom:12px; color:var(--text-secondary)">Data</h4>
+          <button class="btn btn-secondary" style="width:100%; margin-bottom:8px" onclick="app.storage.exportAllData()">Export Data Backup</button>
+          <button class="btn btn-danger" style="width:100%" onclick="if(confirm('Delete all data?')) { app.storage.clearAllData().then(()=>window.location.reload()); }">Clear All Data</button>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Bottom Navigation -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" data-target="home" aria-label="Home">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+        <span>Home</span>
+      </button>
+      <button class="nav-item" data-target="chat" aria-label="Chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+        <span>Chat</span>
+      </button>
+      <button class="nav-item" data-target="profile" aria-label="Profile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        <span>Profile</span>
+      </button>
+      <button class="nav-item" data-target="settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        <span>Settings</span>
+      </button>
+    </nav>
+    
+    <!-- Incoming Call Modal -->
+    <div id="incoming-call-modal" class="call-modal hidden">
+      <div class="call-avatar">📞</div>
+      <div class="call-name" id="incoming-caller-name">Caller</div>
+      <div class="call-status">Incoming voice call...</div>
+      <div class="call-actions">
+        <button id="decline-call" class="btn-call decline">✕</button>
+        <button id="accept-call" class="btn-call accept">📞</button>
+      </div>
+    </div>
+    
+  </div>
+
+  <!-- Scripts -->
+  <script src="/js/storage.js"></script>
+  <script src="/js/profile.js"></script>
+  <script src="/js/socket.js"></script>
+  <script src="/js/webrtc.js"></script>
+  <script src="/js/audio.js"></script>
+  <script src="/js/gps.js"></script>
+  <script src="/js/chat.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/install.js"></script>
+  
+  <script>
+    // Pre-fill server URL
+    document.addEventListener('DOMContentLoaded', () => {
+      const serverInput = document.getElementById('setup-server');
+      if (serverInput && !serverInput.value) {
+        serverInput.value = window.location.protocol + '//' + window.location.host;
+      }
+      
+      // Avatar/Color Selection UI logic
+      document.querySelectorAll('.avatar-option').forEach(el => {
+        el.addEventListener('click', () => {
+          document.querySelectorAll('.avatar-option').forEach(a => a.classList.remove('selected'));
+          el.classList.add('selected');
+        });
+      });
+      document.querySelectorAll('.color-option').forEach(el => {
+        el.addEventListener('click', () => {
+          document.querySelectorAll('.color-option').forEach(c => c.classList.remove('selected'));
+          el.classList.add('selected');
+        });
+      });
+    });
+
+    // Register Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js').catch(e => console.error('SW Error:', e));
+      });
+    }
+
+    // Particle Background Effect
+    const canvas = document.getElementById('particle-canvas');
+    const ctx = canvas.getContext('2d');
+    let particles = [];
+    
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    
+    function initParticles() {
+      particles = [];
+      const num = window.innerWidth < 768 ? 30 : 60;
+      for (let i = 0; i < num; i++) {
+        particles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          r: Math.random() * 2 + 0.5,
+          vx: (Math.random() - 0.5) * 0.5,
+          vy: (Math.random() - 0.5) * 0.5,
+          a: Math.random() * 0.5 + 0.1
+        });
+      }
+    }
+    
+    function animate() {
+      requestAnimationFrame(animate);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const isDark = document.documentElement.dataset.theme === 'dark';
+      ctx.fillStyle = isDark ? 'rgba(0, 212, 255, 1)' : 'rgba(123, 47, 255, 1)';
+      
+      particles.forEach(p => {
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+        ctx.globalAlpha = p.a * (isDark ? 0.6 : 0.3);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+    }
+    
+    window.addEventListener('resize', () => { resize(); initParticles(); });
+    resize();
+    initParticles();
+    animate();
+  </script>
+</body>
+</html>

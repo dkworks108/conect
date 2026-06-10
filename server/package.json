@@ -1,0 +1,14 @@
+{
+  "name": "connect-server",
+  "version": "1.0.0",
+  "description": "Connect App Local Network Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js --dev"
+  },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

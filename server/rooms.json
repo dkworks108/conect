@@ -1,0 +1,26 @@
+[
+  {
+    "id": "e62edd6387d7",
+    "name": "Test Room",
+    "joinCode": "8E992C",
+    "hostId": "c3356c73530f",
+    "passwordHash": null,
+    "isPrivate": false,
+    "createdAt": 1781116433382,
+    "messages": [
+      {
+        "msgId": "637e2e32122d",
+        "type": "text",
+        "senderId": "c3356c73530f",
+        "senderName": "TestUser",
+        "senderAvatar": "🎮",
+        "senderColor": "#ff6b35",
+        "text": "Hello World!",
+        "audioData": null,
+        "audioDuration": null,
+        "replyTo": null,
+        "timestamp": 1781116457001
+      }
+    ]
+  }
+]

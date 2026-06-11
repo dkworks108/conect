@@ -24,8 +24,7 @@ const STATIC_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS.map(url => new Request(url, { cache: 'reload' })))
-        .catch(err => console.warn('[SW] Failed to cache some assets', err));
+      return cache.addAll(STATIC_ASSETS.map(url => new Request(url, { cache: 'reload' })));
     })
   );
   self.skipWaiting();

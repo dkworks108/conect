@@ -247,11 +247,12 @@ class ChatSystem {
   async joinRoom(roomId, password = null) {
     return new Promise((resolve) => {
       let resolved = false;
-      const handler = (data) => { if (resolved) return; resolved = true; this.socket.off('room-joined', handler); this.socket.off('error', errH); resolve({ success: true, ...data }); };
-      const errH = (data) => { if (resolved) return; resolved = true; this.socket.off('room-joined', handler); this.socket.off('error', errH); resolve({ success: false, error: data.message }); };
+      const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
+      const handler = (data) => { if (resolved) return; if (data._reqId !== reqId) return; resolved = true; this.socket.off('room-joined', handler); this.socket.off('error', errH); resolve({ success: true, ...data }); };
+      const errH = (data) => { if (resolved) return; if (data._reqId !== reqId) return; resolved = true; this.socket.off('room-joined', handler); this.socket.off('error', errH); resolve({ success: false, error: data.message }); };
       this.socket.on('room-joined', handler);
       this.socket.on('error', errH);
-      this.socket.send('join-room', { roomId, password });
+      this.socket.send('join-room', { roomId, password, _reqId: reqId });
       setTimeout(() => { if (!resolved) { resolved = true; this.socket.off('room-joined', handler); this.socket.off('error', errH); resolve({ success: false, error: 'Timed out joining room' }); } }, 10000);
     });
   }

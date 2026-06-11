@@ -79,10 +79,15 @@ class WebRTCManager {
     this.currentCallId = targetId;
     const pc = this._createPC(targetId);
     this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    this.socket.send('webrtc-offer', { targetId, offer: pc.localDescription });
-    this._emit('call-started', { targetId, direction: 'outgoing' });
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      this.socket.send('webrtc-offer', { targetId, offer: pc.localDescription });
+      this._emit('call-started', { targetId, direction: 'outgoing' });
+    } catch (e) {
+      this._emit('error', { message: 'Call negotiation failed' });
+      this.endCall(targetId);
+    }
   }
 
   async acceptCall(fromId, offer) {
@@ -112,12 +117,18 @@ class WebRTCManager {
     this.callStartTime = Date.now();
     const pc = this._createPC(fromId);
     this.localStream.getTracks().forEach(t => pc.addTrack(t, this.localStream));
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    this.socket.send('webrtc-answer', { targetId: fromId, answer: pc.localDescription });
-    this.incomingOffer = null;
-    this._emit('call-accepted', { targetId: fromId });
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      this.socket.send('webrtc-answer', { targetId: fromId, answer: pc.localDescription });
+      this.incomingOffer = null;
+      this._emit('call-accepted', { targetId: fromId });
+    } catch (e) {
+      this._emit('error', { message: 'Call connection failed' });
+      this.rejectCall(fromId);
+      this.endCall(fromId);
+    }
   }
 
   rejectCall(fromId) {

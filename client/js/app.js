@@ -235,7 +235,7 @@ class ConnectApp {
       fileInput.addEventListener('change', () => {
         const file = fileInput.files[0];
         if (file) {
-          this.chat.sendFile(file);
+          this.chat.sendFile(file).catch(e => this._showToast(e.message || 'Failed to read file', 'error'));
           fileInput.value = ''; // reset
         }
       });

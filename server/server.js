@@ -431,7 +431,7 @@ function handleMessage(clientId, ws, msg) {
 
     case 'create-room': {
       if (rooms.size >= CONFIG.MAX_ROOMS) {
-        sendTo(ws, 'error', { code: 'SERVER_FULL', message: 'Server has reached the maximum number of rooms.' });
+        sendTo(ws, 'error', { _reqId: payload._reqId, code: 'SERVER_FULL', message: 'Server has reached the maximum number of rooms.' });
         break;
       }
       const client = clients.get(clientId);
@@ -456,7 +456,7 @@ function handleMessage(clientId, ws, msg) {
       };
       rooms.set(roomId, room);
       log('INFO', 'ROOMS', 'Room created', { roomId, roomName: room.name, joinCode, hostId: clientId });
-      sendTo(ws, 'room-created', { roomId, roomName: room.name, joinCode });
+      sendTo(ws, 'room-created', { _reqId: payload._reqId, roomId, roomName: room.name, joinCode });
       joinRoom(clientId, ws, roomId);
       broadcastRoomsList();
       saveRooms();
@@ -475,23 +475,23 @@ function handleMessage(clientId, ws, msg) {
         }
       }
       if (!room) {
-        sendTo(ws, 'error', { code: 'ROOM_NOT_FOUND', message: `Room "${target}" not found. Check the code and try again.` });
+        sendTo(ws, 'error', { _reqId: payload._reqId, code: 'ROOM_NOT_FOUND', message: `Room "${target}" not found. Check the code and try again.` });
         return;
       }
       if (room.clients.size >= CONFIG.MAX_ROOM_MEMBERS) {
-        sendTo(ws, 'error', { code: 'ROOM_FULL', message: `This room is full (max ${CONFIG.MAX_ROOM_MEMBERS} members).` });
+        sendTo(ws, 'error', { _reqId: payload._reqId, code: 'ROOM_FULL', message: `This room is full (max ${CONFIG.MAX_ROOM_MEMBERS} members).` });
         return;
       }
       if (room.passwordHash && payload.password) {
         if (hashPassword(payload.password) !== room.passwordHash) {
-          sendTo(ws, 'error', { code: 'WRONG_PASSWORD', message: 'Wrong password. Try again.' });
+          sendTo(ws, 'error', { _reqId: payload._reqId, code: 'WRONG_PASSWORD', message: 'Wrong password. Try again.' });
           return;
         }
       } else if (room.passwordHash && !payload.password) {
-        sendTo(ws, 'error', { code: 'WRONG_PASSWORD', message: 'This room requires a password.' });
+        sendTo(ws, 'error', { _reqId: payload._reqId, code: 'WRONG_PASSWORD', message: 'This room requires a password.' });
         return;
       }
-      joinRoom(clientId, ws, room.id);
+      joinRoom(clientId, ws, room.id, payload._reqId);
       break;
     }
 
@@ -652,7 +652,7 @@ function handleMessage(clientId, ws, msg) {
     }
 
     case 'list-rooms': {
-      sendTo(ws, 'rooms-list', { rooms: getRoomsList() });
+      sendTo(ws, 'rooms-list', { _reqId: payload._reqId, rooms: getRoomsList() });
       break;
     }
 
@@ -706,7 +706,7 @@ function handleMessage(clientId, ws, msg) {
 }
 
 // ─── ROOM OPERATIONS ────────────────────────────
-function joinRoom(clientId, ws, roomId) {
+function joinRoom(clientId, ws, roomId, reqId = null) {
   const room = rooms.get(roomId);
   if (!room) return;
 
@@ -732,6 +732,7 @@ function joinRoom(clientId, ws, roomId) {
 
   // Send room info + last 50 messages
   sendTo(ws, 'room-joined', {
+    _reqId: reqId,
     roomId, roomName: room.name, joinCode: room.joinCode,
     members, history: room.messages.slice(-50),
     hostId: room.hostId, memberCount: room.clients.size

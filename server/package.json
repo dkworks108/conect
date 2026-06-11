@@ -1,46 +1,25 @@
 {
   "name": "connect-server",
   "version": "2.0.0",
-  "description": "Production-ready local mesh network communication server",
+  "description": "Production WebSocket server for Connect PWA - Local mesh network communication.",
   "main": "server.js",
-  "type": "commonjs",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "prod": "NODE_ENV=production node server.js",
+    "test": "node --test ../tests/server.test.js",
+    "logs": "tail -f data/logs/server.log | node -e \"process.stdin.on('data',d=>d.toString().split('\\n').filter(Boolean).forEach(l=>{try{const e=JSON.parse(l);console.log(e.timestamp,e.level,e.component,e.message,JSON.stringify(e.data))}catch{console.log(l)}}))\""
+  },
   "engines": {
     "node": ">=18.0.0",
     "npm": ">=9.0.0"
   },
-  "scripts": {
-    "start": "node server.js",
-    "dev": "NODE_ENV=development node server.js",
-    "prod": "NODE_ENV=production node server.js",
-    "test": "node tests/server.test.js",
-    "lint": "echo 'No linter configured - using built-in validation'",
-    "logs": "tail -f data/logs/server.log"
-  },
-  "keywords": [
-    "mesh",
-    "network",
-    "p2p",
-    "chat",
-    "webrtc",
-    "websocket",
-    "offline",
-    "pwa",
-    "local"
-  ],
-  "author": "Connect Team",
-  "license": "MIT",
   "dependencies": {
-    "ws": "^8.16.0",
-    "qrcode-terminal": "^0.12.0",
-    "express": "^4.18.2"
+    "express": "4.18.2",
+    "qrcode-terminal": "0.12.0",
+    "ws": "8.16.0"
   },
-  "devDependencies": {},
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/yourusername/connect"
-  },
-  "bugs": {
-    "url": "https://github.com/yourusername/connect/issues"
-  },
-  "homepage": "https://github.com/yourusername/connect#readme"
+  "author": "Connect Team",
+  "license": "MIT"
 }

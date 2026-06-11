@@ -114,6 +114,7 @@ class ChatSystem {
       this.messages.push(sysMsg);
       this._emit('new-message', sysMsg);
       this._emit('members-changed', { count: this.members.size });
+      this._emit('member-left', payload);
     });
 
     this.socket.on('room-joined', async (payload) => {
@@ -197,8 +198,11 @@ class ChatSystem {
 
     // ─── FILE EVENTS ────────────────────────────
     this.socket.on('file-incoming', (payload) => {
+      const timeoutId = setTimeout(() => {
+        this._fileChunks.delete(payload.fileId);
+      }, 5 * 60 * 1000); // 5 min cleanup for orphaned transfers
       this._fileChunks.set(payload.fileId, {
-        ...payload, chunks: [], receivedCount: 0
+        ...payload, chunks: [], receivedCount: 0, timeoutId
       });
       this._emit('file-incoming', payload);
     });
@@ -216,6 +220,7 @@ class ChatSystem {
 
     this.socket.on('file-complete', (payload) => {
       const buf = this._fileChunks.get(payload.fileId);
+      if (buf && buf.timeoutId) clearTimeout(buf.timeoutId);
       const fileMsg = { ...payload, status: 'received' };
       this.messages.push(fileMsg);
       this.storage.saveMessage(this.currentRoomId, fileMsg);
@@ -433,7 +438,7 @@ class ChatSystem {
   }
 
   // ─── SEND VOICE MESSAGE ──────────────────────
-  sendVoiceMessage(audioBlob, duration) {
+  sendVoiceMessage(audioBlob, duration, mimeType) {
     if (!this.currentRoomId) return;
     const reader = new FileReader();
     reader.onload = () => {
@@ -449,6 +454,7 @@ class ChatSystem {
         text: '🎤 Voice message',
         audioData: base64,
         audioDuration: duration,
+        audioMimeType: mimeType,
         timestamp: Date.now(),
         status: 'sending'
       };
@@ -459,7 +465,8 @@ class ChatSystem {
         messageType: 'voice',
         text: '🎤 Voice message',
         audioData: base64,
-        duration
+        duration,
+        mimeType
       });
     };
     reader.readAsDataURL(audioBlob);

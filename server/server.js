@@ -142,7 +142,7 @@ function cleanupState() {
 
     if (room.fileBuffers instanceof Map) {
       for (const [fileId, buffer] of room.fileBuffers.entries()) {
-        if (now - (buffer.startedAt || now) > 30 * 60 * 1000) {
+        if (now - (buffer.startedAt || now) > 5 * 60 * 1000) {
           room.fileBuffers.delete(fileId);
         }
       }
@@ -509,8 +509,8 @@ function handleMessage(clientId, ws, msg) {
       const room = rooms.get(client.roomId);
       if (!room) return;
 
-      const text = String(payload.text || '').slice(0, 5000);
-      if (!text.trim()) return;
+      const text = sanitizeText(payload.text);
+      if (!text) return;
 
       const chatMsg = {
         msgId: uid(),
@@ -522,6 +522,7 @@ function handleMessage(clientId, ws, msg) {
         text: text,
         audioData: payload.audioData || null,
         audioDuration: payload.duration || null,
+        audioMimeType: payload.mimeType || null,
         replyTo: payload.replyTo || null,
         timestamp: Date.now()
       };

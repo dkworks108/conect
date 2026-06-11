@@ -219,8 +219,8 @@ class ConnectApp {
       document.addEventListener('mouseup', stopRecord);
       document.addEventListener('touchend', stopRecord);
 
-      this.audio.on('recording-complete', ({ blob, duration }) => {
-        this.chat.sendVoiceMessage(blob, duration);
+      this.audio.on('recording-complete', ({ blob, duration, mimeType }) => {
+        this.chat.sendVoiceMessage(blob, duration, mimeType);
       });
       this.audio.on('recording-too-short', () => {
         this._showToast('Hold longer to record', 'warning');
@@ -270,13 +270,13 @@ class ConnectApp {
           this._renderMessages(true);
         }
       });
-      searchInput.addEventListener('input', (e) => {
+      searchInput.addEventListener('input', async (e) => {
         const q = e.target.value;
         if (!q.trim()) {
           this._renderMessages(true);
           return;
         }
-        const results = this.chat.search(q);
+        const results = await this.storage.searchMessages(q);
         const area = document.getElementById('chat-messages');
         if (!area) return;
         area.innerHTML = '';
@@ -284,7 +284,7 @@ class ConnectApp {
            area.innerHTML = '<div class="empty-state">No messages found.</div>';
            return;
         }
-        results.forEach(m => this._appendMessage(m));
+        results.reverse().forEach(m => this._appendMessage(m));
       });
     }
 
@@ -445,6 +445,13 @@ class ConnectApp {
       if (el) el.textContent = count;
     });
 
+    this.chat.on('member-left', (payload) => {
+      if (this.webrtc.currentCallId === payload.clientId) {
+        this.webrtc.endCall();
+        this._showToast(`${payload.displayName || 'User'} left the room`, 'info');
+      }
+    });
+
     this.chat.on('file-progress', ({ fileId, progress }) => {
       const bar = document.getElementById(`progress-${fileId}`);
       if (bar) bar.style.width = `${progress}%`;
@@ -572,7 +579,7 @@ class ConnectApp {
       } else if (msg.type === 'voice') {
         contentHtml = `
           <div class="voice-bubble">
-            <button class="play-btn" onclick="app.audio.playVoiceMessage('${msg.audioData}')">▶</button>
+            <button class="play-btn" onclick="app.audio.playVoiceMessage('${msg.audioData}', '${msg.audioMimeType || msg.mimeType || 'audio/webm'}')">▶</button>
             <div class="voice-waveform"></div>
             <span class="voice-dur">${WebRTCManager.formatDuration(msg.audioDuration)}</span>
           </div>

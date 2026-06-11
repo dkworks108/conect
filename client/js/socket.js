@@ -129,8 +129,12 @@ class SocketManager {
       return;
     }
     this.reconnectAttempts++;
-    const delay = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
+    const delay = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
     this._emit('reconnecting', { attempt: this.reconnectAttempts, max: this.maxReconnectAttempts, delay });
+
+    if (this._reconnectTimer) {
+      clearTimeout(this._reconnectTimer);
+    }
 
     this._reconnectTimer = setTimeout(async () => {
       try {

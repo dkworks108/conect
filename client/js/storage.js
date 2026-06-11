@@ -116,7 +116,10 @@ class StorageSystem {
       return new Promise((resolve, reject) => {
         const tx = db.transaction('messages', 'readwrite');
         tx.objectStore('messages').put({ ...msg, roomId, storedAt: Date.now() });
-        tx.oncomplete = () => resolve(true);
+        tx.oncomplete = () => {
+          resolve(true);
+          this.trimMessages(roomId, 500).catch(e => console.error('[STORAGE] Prune error:', e));
+        };
         tx.onerror = () => reject(tx.error);
       });
     } catch (e) {
@@ -183,6 +186,28 @@ class StorageSystem {
         req.onerror = () => resolve(null);
       });
     } catch (e) { return null; }
+  }
+
+  async searchMessages(query) {
+    if (!query) return [];
+    try {
+      const db = await this._getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('messages', 'readonly');
+        const req = tx.objectStore('messages').getAll();
+        req.onsuccess = () => {
+          const msgs = req.result || [];
+          const q = query.toLowerCase();
+          const results = msgs.filter(m => {
+            return (m.text && m.text.toLowerCase().includes(q)) ||
+                   (m.senderName && m.senderName.toLowerCase().includes(q)) ||
+                   (m.fileName && m.fileName.toLowerCase().includes(q));
+          });
+          resolve(results.sort((a, b) => b.timestamp - a.timestamp));
+        };
+        req.onerror = () => resolve([]);
+      });
+    } catch (e) { return []; }
   }
 
   async clearMessages(roomId) {

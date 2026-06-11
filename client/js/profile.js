@@ -6,10 +6,11 @@ class ProfileManager {
   constructor(storage) {
     this.storage = storage;
     this.profile = null;
-    this.avatarEmojis = ['😎','🚀','🦊','🐱','🦁','🐼','🦄','🐉','🎮','🎯','⚡','🔥'];
+    this.avatarEmojis = ['😎','🚀','🦊','🐱','🦁','🐼','🦄','🐉','🎮','🎯','⚡','🔥','🌈','🍀','🌙','🌻','🛰️','🧠','🛡️','🎧','📡','💎','🪐','✨'];
     this.avatarColors = [
       '#00d4ff','#7b2fff','#ff6b35','#00ff88','#ff4488','#ffcc00',
-      '#ff4444','#44aaff','#88ff44','#ff88ff','#44ffcc','#ffaa44'
+      '#ff4444','#44aaff','#88ff44','#ff88ff','#44ffcc','#ffaa44',
+      '#1e90ff','#0fb9b1','#f368e0','#576574'
     ];
   }
 
@@ -27,13 +28,46 @@ class ProfileManager {
     return this.profile;
   }
 
+  validate(data) {
+    const displayName = String(data.displayName || '').trim();
+    const statusMessage = String(data.statusMessage || '').trim();
+    const avatar = data.avatar || '😎';
+    const avatarColor = data.avatarColor || '#00d4ff';
+    const errors = [];
+
+    if (displayName.length < 2 || displayName.length > 20) {
+      errors.push('Display name must be 2-20 characters.');
+    }
+    if (statusMessage.length > 100) {
+      errors.push('Status message must be 100 characters or less.');
+    }
+    if (!this.avatarEmojis.includes(avatar)) {
+      errors.push('Please choose a valid avatar.');
+    }
+    if (!this.avatarColors.includes(avatarColor)) {
+      errors.push('Please choose a valid color.');
+    }
+
+    return {
+      valid: errors.length === 0,
+      errors,
+      value: {
+        displayName: displayName.slice(0, 20),
+        avatar,
+        avatarColor,
+        statusMessage: statusMessage.slice(0, 100)
+      }
+    };
+  }
+
   create(data) {
+    const validated = this.validate(data);
     this.profile = {
       id: 'u_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 6),
-      displayName: String(data.displayName || 'User').trim().slice(0, 20),
-      avatar: data.avatar || '😎',
-      avatarColor: data.avatarColor || '#00d4ff',
-      statusMessage: String(data.statusMessage || '').trim().slice(0, 100),
+      displayName: validated.value.displayName || 'User',
+      avatar: validated.value.avatar,
+      avatarColor: validated.value.avatarColor,
+      statusMessage: validated.value.statusMessage,
       status: 'online',
       createdAt: Date.now()
     };
@@ -44,13 +78,25 @@ class ProfileManager {
   update(fields) {
     if (!this.profile) this.load();
     if (!this.profile) return null;
-    if (fields.displayName !== undefined) this.profile.displayName = String(fields.displayName).trim().slice(0, 20);
-    if (fields.avatar !== undefined) this.profile.avatar = fields.avatar;
-    if (fields.avatarColor !== undefined) this.profile.avatarColor = fields.avatarColor;
-    if (fields.statusMessage !== undefined) this.profile.statusMessage = String(fields.statusMessage).trim().slice(0, 100);
+    const next = { ...this.profile, ...fields };
+    const validated = this.validate(next);
+    this.profile.displayName = validated.value.displayName || this.profile.displayName;
+    this.profile.avatar = validated.value.avatar;
+    this.profile.avatarColor = validated.value.avatarColor;
+    this.profile.statusMessage = validated.value.statusMessage;
     this.profile.updatedAt = Date.now();
     this.storage.saveProfile(this.profile);
     return this.profile;
+  }
+
+  createRandom() {
+    const suffix = String(Math.floor(1000 + Math.random() * 9000));
+    return this.create({
+      displayName: `User${suffix}`,
+      avatar: this.avatarEmojis[Math.floor(Math.random() * this.avatarEmojis.length)],
+      avatarColor: this.avatarColors[Math.floor(Math.random() * this.avatarColors.length)],
+      statusMessage: ''
+    });
   }
 
   getShareable() {
@@ -65,7 +111,7 @@ class ProfileManager {
   }
 
   getDeviceInfo() {
-    const ua = navigator.userAgent;
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : '';
     let device = 'Unknown', os = 'Unknown', browser = 'Unknown';
     // OS
     if (/iPhone/.test(ua)) { device = 'iPhone'; os = 'iOS'; }

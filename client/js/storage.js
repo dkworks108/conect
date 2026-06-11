@@ -5,7 +5,7 @@
 class StorageSystem {
   constructor() {
     this.dbName = 'ConnectDB';
-    this.dbVersion = 2;
+    this.dbVersion = 3;
     this.db = null;
     this._ready = this._initDB();
   }
@@ -29,6 +29,11 @@ class StorageSystem {
         }
         if (!db.objectStoreNames.contains('files')) {
           db.createObjectStore('files', { keyPath: 'fileId' });
+        }
+        if (!db.objectStoreNames.contains('logs')) {
+          const ls = db.createObjectStore('logs', { keyPath: 'id', autoIncrement: true });
+          ls.createIndex('timestamp', 'timestamp', { unique: false });
+          ls.createIndex('level', 'level', { unique: false });
         }
       };
       req.onsuccess = (e) => { this.db = e.target.result; resolve(this.db); };
@@ -156,6 +161,18 @@ class StorageSystem {
     } catch (e) { return []; }
   }
 
+  async loadAllMessages() {
+    try {
+      const db = await this._getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('messages', 'readonly');
+        const req = tx.objectStore('messages').getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      });
+    } catch (e) { return []; }
+  }
+
   async getMessageById(msgId) {
     try {
       const db = await this._getDB();
@@ -263,12 +280,100 @@ class StorageSystem {
     } catch (e) { return null; }
   }
 
+  // ─── ROOMS (IndexedDB) ────────────────────────
+  async saveRoom(room) {
+    try {
+      const db = await this._getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('rooms', 'readwrite');
+        tx.objectStore('rooms').put({ ...room, updatedAt: Date.now() });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch (e) { return false; }
+  }
+
+  async loadRoom(roomId) {
+    try {
+      const db = await this._getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('rooms', 'readonly');
+        const req = tx.objectStore('rooms').get(roomId);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => resolve(null);
+      });
+    } catch (e) { return null; }
+  }
+
+  async loadRooms() {
+    try {
+      const db = await this._getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('rooms', 'readonly');
+        const req = tx.objectStore('rooms').getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => resolve([]);
+      });
+    } catch (e) { return []; }
+  }
+
+  async deleteRoom(roomId) {
+    try {
+      const db = await this._getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('rooms', 'readwrite');
+        tx.objectStore('rooms').delete(roomId);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch (e) { return false; }
+  }
+
+  // ─── LOGS ──────────────────────────────────────
+  async saveLog(entry) {
+    try {
+      const db = await this._getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('logs', 'readwrite');
+        tx.objectStore('logs').add({ ...entry, timestamp: entry.timestamp || Date.now() });
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+      });
+    } catch (e) { return false; }
+  }
+
+  async loadLogs(limit = 100) {
+    try {
+      const db = await this._getDB();
+      return new Promise((resolve) => {
+        const tx = db.transaction('logs', 'readonly');
+        const store = tx.objectStore('logs');
+        const idx = store.index('timestamp');
+        const logs = [];
+        const req = idx.openCursor(null, 'prev');
+        req.onsuccess = (e) => {
+          const cursor = e.target.result;
+          if (cursor && logs.length < limit) {
+            logs.push(cursor.value);
+            cursor.continue();
+          } else {
+            resolve(logs);
+          }
+        };
+        req.onerror = () => resolve([]);
+      });
+    } catch (e) { return []; }
+  }
+
   // ─── EXPORT / CLEAR ───────────────────────────
   async exportAllData() {
     const data = {
       profile: this.loadProfile(),
       settings: this.loadAllSettings(),
       serverUrl: this.loadServerUrl(),
+      recentEmojis: this.getRecentEmojis(),
+      rooms: await this.loadRooms(),
+      messages: await this.loadAllMessages(),
       exportedAt: new Date().toISOString()
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -294,6 +399,22 @@ class StorageSystem {
       const tx = db.transaction(storeNames, 'readwrite');
       storeNames.forEach(name => tx.objectStore(name).clear());
     } catch (e) { /* ignore */ }
+  }
+
+  async estimateUsage() {
+    if (navigator.storage && navigator.storage.estimate) {
+      try {
+        const estimate = await navigator.storage.estimate();
+        return {
+          usage: estimate.usage || 0,
+          quota: estimate.quota || 0,
+          percentUsed: estimate.quota ? Math.round((estimate.usage / estimate.quota) * 100) : 0
+        };
+      } catch (e) {
+        return { usage: 0, quota: 0, percentUsed: 0 };
+      }
+    }
+    return { usage: 0, quota: 0, percentUsed: 0 };
   }
 }
 

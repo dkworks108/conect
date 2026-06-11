@@ -1,18 +1,22 @@
-const CACHE_NAME = 'connect-cache-v2';
+const CACHE_NAME = 'connect-cache-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
+  '/assets/icons/favicon.svg',
   '/css/main.css',
   '/css/themes.css',
   '/css/animations.css',
   '/css/responsive.css',
+  '/css/components.css',
   '/js/storage.js',
   '/js/profile.js',
   '/js/socket.js',
   '/js/webrtc.js',
   '/js/audio.js',
   '/js/gps.js',
+  '/js/utils.js',
+  '/js/ui.js',
   '/js/chat.js',
   '/js/app.js'
 ];
@@ -20,7 +24,6 @@ const STATIC_ASSETS = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      // Don't strictly fail install if assets are missing
       return cache.addAll(STATIC_ASSETS.map(url => new Request(url, { cache: 'reload' })))
         .catch(err => console.warn('[SW] Failed to cache some assets', err));
     })
@@ -55,27 +58,25 @@ self.addEventListener('fetch', (event) => {
       fetch(event.request).catch(() => {
         return caches.match('/index.html').then(response => {
           if (response) {
-            // Notify client they are offline
             self.clients.matchAll().then(clients => {
               clients.forEach(client => client.postMessage({ type: 'OFFLINE_STATE' }));
             });
             return response;
           }
+          return caches.match('/');
         });
       })
     );
   } else {
-    // Cache-first for JS/CSS/Images
     event.respondWith(
       caches.match(event.request).then((response) => {
         return response || fetch(event.request).then((fetchRes) => {
-          return caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, fetchRes.clone());
-            return fetchRes;
-          });
+          if (fetchRes && fetchRes.ok) {
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, fetchRes.clone()));
+          }
+          return fetchRes;
         });
       }).catch(() => {
-        // Return a generic offline fallback if it's an image
         if (event.request.destination === 'image') {
           return new Response('<svg width="100" height="100"><text x="10" y="40">Offline</text></svg>', {
             headers: { 'Content-Type': 'image/svg+xml' }
@@ -83,6 +84,13 @@ self.addEventListener('fetch', (event) => {
         }
       })
     );
+  }
+});
+
+self.addEventListener('message', (event) => {
+  if (!event.data) return;
+  if (event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
   }
 });
 

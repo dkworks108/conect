@@ -1,34 +1,26 @@
-#!/bin/bash
-# Connect PWA - Linux/macOS Startup Script
+#!/bin/sh
+set -eu
 
 echo "=========================================="
 echo "         CONNECT PWA - SERVER START       "
 echo "=========================================="
 
-# Ensure we are in the script directory
 cd "$(dirname "$0")"
 
-# Check if Node.js is installed
-if ! command -v node &> /dev/null
-then
-    echo "❌ Error: Node.js is not installed."
-    echo "Please install Node.js from https://nodejs.org/"
+if ! command -v node >/dev/null 2>&1; then
+    echo "Node.js is not installed. Please install Node.js 18 or newer."
     exit 1
 fi
 
-# Check if npm is installed
-if ! command -v npm &> /dev/null
-then
-    echo "❌ Error: npm is not installed."
-    echo "Please install npm to continue."
+if ! command -v npm >/dev/null 2>&1; then
+    echo "npm is not installed. Please install npm 9 or newer."
     exit 1
 fi
 
-# Install dependencies if node_modules doesn't exist
-if [ ! -d "node_modules" ]; then
-    echo "📦 Installing dependencies..."
+if [ ! -d node_modules ]; then
+    echo "Installing dependencies..."
     npm install
 fi
 
-echo "🚀 Starting server..."
-node server.js
+echo "Starting server..."
+npm start

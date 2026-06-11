@@ -12,80 +12,80 @@
   .call-avatar { width: 60px; height: 60px; font-size: 30px; }
 }
 
-/* Tablets and larger phones (landscape) - min 768px */
+/* Default mobile layout uses single column */
+.card-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Tablets and Desktop */
 @media (min-width: 768px) {
-  /* Center main content, don't let it stretch full width on huge screens */
-  .app-main {
-    max-width: 700px;
+  body {
+    background: #020205; /* Darker backdrop on large screens */
+  }
+  
+  [data-theme="light"] body {
+    background: #e5e7eb;
+  }
+
+  /* Center the main app on screen like a mobile device, or expand elegantly */
+  .app-container {
+    max-width: 800px;
     margin: 0 auto;
     border-left: 1px solid var(--border);
     border-right: 1px solid var(--border);
-    background: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 0 40px rgba(0,0,0,0.3);
+    min-height: 100vh;
+    background: var(--bg-dark);
   }
   
-  /* Confine the header and nav to the main content width */
-  .app-header {
-    max-width: 700px;
-    margin: 0 auto;
-    border-left: 1px solid var(--border);
-    border-right: 1px solid var(--border);
-  }
-  
+  /* Because bottom-nav is fixed, we must constrain it to the container width */
   .bottom-nav {
-    max-width: 700px;
+    max-width: 800px;
     left: 50%;
     transform: translateX(-50%);
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    border-left: 1px solid var(--border);
-    border-right: 1px solid var(--border);
-  }
-
-  .chat-input-area {
-    max-width: 700px;
-    margin: 0 auto;
-    border-left: 1px solid var(--border);
-    border-right: 1px solid var(--border);
   }
 
   .call-bar {
-    max-width: 700px;
+    max-width: 800px;
     left: 50%;
     transform: translateX(-50%);
-    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-  }
-}
-
-/* Desktops and Laptops - min 1024px */
-@media (min-width: 1024px) {
-  .app-main, .app-header, .chat-input-area, .call-bar {
-    max-width: 800px;
-  }
-  
-  .bottom-nav {
-    max-width: 800px;
-  }
-  
-  .page {
-    padding: 30px 40px;
-  }
-  
-  .chat-messages {
-    padding: 24px 40px;
   }
 
-  /* Side-by-side layout for Home screen rooms */
-  #rooms-list {
+  /* Use grid for lists on wider screens */
+  .card-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
     gap: 16px;
   }
 
-  /* Desktop-specific hover states (not present on touch devices) */
+  .page {
+    padding: 24px 32px;
+  }
+  
+  .chat-messages {
+    padding: 24px 32px;
+  }
+
+  /* Desktop hover enhancements */
   .nav-item:hover { color: var(--primary); }
+  .btn-secondary:hover { transform: translateY(-1px); }
   .chat-message:hover .chat-meta { opacity: 1; }
 }
 
-/* Ultra-wide screens - min 1440px */
-@media (min-width: 1440px) {
-  /* No structural changes, just ensuring the 800px max-width holds */
+/* Ultra-wide screens - expand a bit more */
+@media (min-width: 1200px) {
+  .app-container {
+    max-width: 1000px;
+  }
+  
+  .bottom-nav, .call-bar {
+    max-width: 1000px;
+  }
+
+  .card-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }

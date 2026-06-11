@@ -12,6 +12,9 @@ class AudioSystem {
     this.recordingStartTime = 0;
     this.isRecording = false;
     this._listeners = {};
+    this.maxRecordingDurationMs = 5 * 60 * 1000;
+    this._recordingTimeout = null;
+    this._currentStream = null;
   }
 
   _getCtx() {
@@ -64,6 +67,21 @@ class AudioSystem {
     }
   }
 
+  _getRecorderMimeType() {
+    if (typeof MediaRecorder === 'undefined') return 'audio/webm';
+    if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) return 'audio/webm;codecs=opus';
+    if (MediaRecorder.isTypeSupported('audio/webm')) return 'audio/webm';
+    if (MediaRecorder.isTypeSupported('audio/mp4')) return 'audio/mp4';
+    return '';
+  }
+
+  _stopRecordingTimeout() {
+    if (this._recordingTimeout) {
+      clearTimeout(this._recordingTimeout);
+      this._recordingTimeout = null;
+    }
+  }
+
   playMessageReceived() { this._seq([[880, 0.08, 'sine', 0.1], [1100, 0.12, 'sine', 0.08]]); this._vibrate([50]); }
   playMessageSent() { this._playTone(800, 0.06, 'sine', 0.06); this._vibrate([30]); }
   playUserJoined() { this._seq([[440, 0.08, 'sine', 0.1], [660, 0.08, 'sine', 0.1], [880, 0.12, 'sine', 0.08]]); this._vibrate([30, 50, 30]); }
@@ -75,11 +93,17 @@ class AudioSystem {
   // ─── VOICE RECORDING ─────────────────────────
   async startRecording() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4';
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1
+        }
+      });
+      const mimeType = this._getRecorderMimeType();
       this.recorder = new MediaRecorder(stream, { mimeType });
+      this._currentStream = stream;
       this.recordingChunks = [];
       this.recordingStartTime = Date.now();
       this.isRecording = true;
@@ -89,7 +113,11 @@ class AudioSystem {
       };
 
       this.recorder.onstop = () => {
-        stream.getTracks().forEach(t => t.stop());
+        this._stopRecordingTimeout();
+        if (this._currentStream) {
+          this._currentStream.getTracks().forEach(t => t.stop());
+          this._currentStream = null;
+        }
         const duration = Math.round((Date.now() - this.recordingStartTime) / 1000);
         const blob = new Blob(this.recordingChunks, { type: mimeType });
         this.isRecording = false;
@@ -100,11 +128,14 @@ class AudioSystem {
         this._emit('recording-complete', { blob, duration, mimeType });
       };
 
-      this.recorder.start(100);
+      this.recorder.start(250);
+      this._recordingTimeout = setTimeout(() => {
+        if (this.isRecording) this.stopRecording();
+      }, this.maxRecordingDurationMs);
       this._emit('recording-started');
       return true;
     } catch (e) {
-      this._emit('recording-error', { message: 'Microphone access denied. Enable in browser settings.' });
+      this._emit('recording-error', { message: e?.message || 'Microphone access denied. Enable in browser settings.' });
       return false;
     }
   }
@@ -113,6 +144,7 @@ class AudioSystem {
     if (this.recorder && this.recorder.state === 'recording') {
       this.recorder.stop();
     }
+    this._stopRecordingTimeout();
     this.isRecording = false;
   }
 
@@ -120,10 +152,14 @@ class AudioSystem {
     if (this.recorder && this.recorder.state === 'recording') {
       this.recorder.onstop = () => {};
       this.recorder.stop();
-      try { this.recorder.stream.getTracks().forEach(t => t.stop()); } catch (e) {}
+      try {
+        if (this._currentStream) this._currentStream.getTracks().forEach(t => t.stop());
+      } catch (e) {}
     }
+    this._stopRecordingTimeout();
     this.isRecording = false;
     this.recordingChunks = [];
+    this._currentStream = null;
     this._emit('recording-cancelled');
   }
 
@@ -135,13 +171,15 @@ class AudioSystem {
   // ─── PLAYBACK ─────────────────────────────────
   playVoiceMessage(base64Data, mimeType = 'audio/webm') {
     try {
-      const binary = atob(base64Data);
+      const cleanBase64 = String(base64Data || '').replace(/^data:[^;]+;base64,/, '');
+      const binary = atob(cleanBase64);
       const bytes = new Uint8Array(binary.length);
       for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
       const blob = new Blob([bytes], { type: mimeType });
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
-      audio.play();
+      audio.preload = 'none';
+      audio.play().catch(() => {});
       audio.onended = () => URL.revokeObjectURL(url);
       return audio;
     } catch (e) {

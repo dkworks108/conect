@@ -1,0 +1,16 @@
+{
+  "name": "connect",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Connect local mesh communication PWA",
+  "scripts": {
+    "start": "cd server && npm start",
+    "dev": "cd server && npm run dev",
+    "prod": "cd server && npm run prod",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

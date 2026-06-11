@@ -8,17 +8,34 @@ class WebRTCManager {
     this.peerConnections = new Map();
     this.localStream = null;
     this.remoteStreams = new Map();
-    this.config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+    this.config = {
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' }
+      ]
+    };
     this._listeners = {};
     this.currentCallId = null;
     this.callStartTime = null;
     this.incomingOffer = null;
+    this._autoDeclineTimer = null;
+    this.isMuted = false;
     this._setupSignaling();
+  }
+
+  static isSupported() {
+    return typeof RTCPeerConnection !== 'undefined' && typeof navigator !== 'undefined' && !!navigator.mediaDevices;
   }
 
   _setupSignaling() {
     this.socket.on('webrtc-offer', ({ fromId, fromName, offer }) => {
       this.incomingOffer = { fromId, fromName, offer };
+      if (this._autoDeclineTimer) clearTimeout(this._autoDeclineTimer);
+      this._autoDeclineTimer = setTimeout(() => {
+        if (this.incomingOffer && this.incomingOffer.fromId === fromId) {
+          this.rejectCall(fromId);
+        }
+      }, 30000);
       this._emit('incoming-call', { fromId, fromName, offer });
     });
     this.socket.on('webrtc-answer', async ({ fromId, answer }) => {
@@ -43,10 +60,20 @@ class WebRTCManager {
 
   async callUser(targetId) {
     if (this.currentCallId) { this._emit('error', { message: 'Already in a call' }); return; }
+    if (!WebRTCManager.isSupported()) {
+      this._emit('error', { message: 'Voice calls are not supported in this browser.' });
+      return;
+    }
     try {
-      this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
     } catch (e) {
-      this._emit('error', { message: 'Microphone access denied. Enable in browser settings.' });
+      this._emit('error', { message: 'Microphone access is required for calls. Please enable it in browser settings.' });
       return;
     }
     this.currentCallId = targetId;
@@ -64,10 +91,20 @@ class WebRTCManager {
       offer = this.incomingOffer.offer;
     }
     if (!fromId || !offer) return;
+    if (!WebRTCManager.isSupported()) {
+      this._emit('error', { message: 'Voice calls are not supported in this browser.' });
+      return;
+    }
     try {
-      this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
     } catch (e) {
-      this._emit('error', { message: 'Microphone access denied.' });
+      this._emit('error', { message: 'Microphone access is required for calls. Please enable it in browser settings.' });
       this.rejectCall(fromId);
       return;
     }
@@ -87,6 +124,7 @@ class WebRTCManager {
     if (!fromId && this.incomingOffer) fromId = this.incomingOffer.fromId;
     if (fromId) this.socket.send('webrtc-reject', { targetId: fromId });
     this.incomingOffer = null;
+    if (this._autoDeclineTimer) { clearTimeout(this._autoDeclineTimer); this._autoDeclineTimer = null; }
     this._emit('call-rejected-by-us', { targetId: fromId });
   }
 
@@ -104,6 +142,10 @@ class WebRTCManager {
     this.currentCallId = null;
     this.callStartTime = null;
     this.incomingOffer = null;
+    this.isMuted = false;
+    if (this._autoDeclineTimer) { clearTimeout(this._autoDeclineTimer); this._autoDeclineTimer = null; }
+    const existingAudio = document.getElementById('remote-audio');
+    if (existingAudio) existingAudio.remove();
     this._emit('call-ended', { targetId, duration });
   }
 
@@ -134,12 +176,33 @@ class WebRTCManager {
   }
 
   _playStream(stream) {
+    const existingAudio = document.getElementById('remote-audio');
+    if (existingAudio) existingAudio.remove();
     const audio = document.createElement('audio');
     audio.srcObject = stream;
     audio.autoplay = true;
     audio.id = 'remote-audio';
     document.body.appendChild(audio);
     audio.play().catch(() => {});
+  }
+
+  setMuted(muted) {
+    this.isMuted = !!muted;
+    if (this.localStream) {
+      this.localStream.getAudioTracks().forEach(track => { track.enabled = !this.isMuted; });
+    }
+    this._emit('mute-changed', { muted: this.isMuted });
+  }
+
+  toggleMute() {
+    this.setMuted(!this.isMuted);
+    return this.isMuted;
+  }
+
+  getConnectionState() {
+    const states = [];
+    this.peerConnections.forEach((pc, id) => states.push({ id, state: pc.connectionState }));
+    return states;
   }
 
   on(e, cb) { if (!this._listeners[e]) this._listeners[e] = []; this._listeners[e].push(cb); }

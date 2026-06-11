@@ -101,7 +101,7 @@ input, select, textarea { font-family: inherit; }
   height: var(--nav-height); display: flex;
   align-items: center; justify-content: space-around;
   background: rgba(10,10,26,0.95); backdrop-filter: blur(20px);
-  border-top: 1px solid var(--border); z-index: 100;
+  border-top: 1px solid var(--border); z-index: 1000;
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 .nav-item {

@@ -1,39 +1,44 @@
 /**
  * Connect - PWA Installation Prompt Manager
  */
-let deferredPrompt;
+let deferredPrompt = null;
 const installBtn = document.getElementById('install-btn');
 
-window.addEventListener('beforeinstallprompt', (e) => {
-  // Prevent the mini-infobar from appearing on mobile
-  e.preventDefault();
-  // Stash the event so it can be triggered later.
-  deferredPrompt = e;
-  // Update UI notify the user they can install the PWA
+function showInstallButton(show) {
   if (installBtn) {
-    installBtn.style.display = 'flex';
+    installBtn.style.display = show ? 'flex' : 'none';
+    installBtn.setAttribute('aria-hidden', show ? 'false' : 'true');
   }
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredPrompt = e;
+  showInstallButton(true);
 });
 
 if (installBtn) {
   installBtn.addEventListener('click', async () => {
     if (!deferredPrompt) return;
-    // Show the install prompt
-    deferredPrompt.prompt();
-    // Wait for the user to respond to the prompt
-    const { outcome } = await deferredPrompt.userChoice;
-    console.log(`User response to the install prompt: ${outcome}`);
-    // We've used the prompt, and can't use it again, throw it away
+    installBtn.disabled = true;
+    try {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log(`User response to the install prompt: ${outcome}`);
+    } finally {
+      installBtn.disabled = false;
     deferredPrompt = null;
-    installBtn.style.display = 'none';
+      showInstallButton(false);
+    }
   });
 }
 
 window.addEventListener('appinstalled', () => {
-  // Clear the deferredPrompt so it can be garbage collected
   deferredPrompt = null;
-  if (installBtn) {
-    installBtn.style.display = 'none';
-  }
+  showInstallButton(false);
   console.log('Connect App was installed.');
+});
+
+window.addEventListener('load', () => {
+  if (!deferredPrompt) showInstallButton(false);
 });

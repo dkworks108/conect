@@ -21,19 +21,32 @@ class SocketManager {
     this.latency = 0;
     this._lastPingTime = 0;
     this.connectedAt = 0;
+    this.maxQueueSize = 500;
+  }
+
+  _normalizeServerUrl(serverUrl) {
+    let url = String(serverUrl || '').trim().replace(/\/+$/, '');
+    if (!url) throw new Error('Server address is required');
+    if (!url.match(/^https?:\/\//) && !url.match(/^wss?:\/\//)) {
+      url = 'http://' + url;
+    }
+    const httpUrl = url.replace(/^wss?:/, 'http:');
+    const wsUrl = url.replace(/^https?:/, 'ws:');
+    return { httpUrl, wsUrl: wsUrl.match(/:\d+/) ? wsUrl : wsUrl + ':3000' };
   }
 
   connect(serverUrl, profile) {
     return new Promise((resolve, reject) => {
       this.profile = profile;
-      let url = serverUrl.trim().replace(/\/+$/, '');
-      // Save HTTP URL for display
-      if (!url.match(/^https?:\/\//) && !url.match(/^wss?:\/\//)) url = 'http://' + url;
-      this.httpUrl = url.replace(/^ws/, 'http');
-      // Convert to WS
-      let wsUrl = url.replace(/^http/, 'ws');
-      if (!wsUrl.match(/:\d+/)) wsUrl += ':3000';
-      this.serverUrl = wsUrl;
+      let normalized;
+      try {
+        normalized = this._normalizeServerUrl(serverUrl);
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      this.httpUrl = normalized.httpUrl;
+      this.serverUrl = normalized.wsUrl;
 
       const timeout = setTimeout(() => {
         reject(new Error('Cannot reach server at ' + serverUrl + ' — Is the server running?'));
@@ -42,6 +55,7 @@ class SocketManager {
 
       try {
         this.ws = new WebSocket(wsUrl);
+        this.ws.binaryType = 'arraybuffer';
       } catch (e) {
         clearTimeout(timeout);
         reject(new Error('Invalid server address: ' + serverUrl));
@@ -142,6 +156,10 @@ class SocketManager {
     if (this.connected && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(msg);
     } else {
+      if (this.messageQueue.length >= this.maxQueueSize) {
+        this.messageQueue.shift();
+        this._emit('queue-dropped', { maxQueueSize: this.maxQueueSize });
+      }
       this.messageQueue.push(msg);
     }
   }
@@ -237,6 +255,7 @@ class SocketManager {
 
   setLastRoom(roomId) { this._lastRoomId = roomId; }
   getDisplayUrl() { return (this.httpUrl || this.serverUrl || '').replace(/^(wss?|https?):\/\//, ''); }
+  getPendingCount() { return this.messageQueue.length; }
 }
 
 window.SocketManager = SocketManager;

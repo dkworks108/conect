@@ -13,10 +13,13 @@ class GPSNavigation {
     this.ctx = null;
     this.animFrame = null;
     this._listeners = {};
+    this.liveSharingEnabled = false;
+    this.liveSharingIntervalMs = 30000;
+    this._liveSharingTimer = null;
   }
 
   startTracking() {
-    if (this.isTracking || !('geolocation' in navigator)) return false;
+    if (this.isTracking || !GPSNavigation.isSupported()) return false;
     this.isTracking = true;
     this.watchId = navigator.geolocation.watchPosition(
       (p) => {
@@ -26,6 +29,7 @@ class GPSNavigation {
           timestamp: p.timestamp
         };
         this._emit('position', this.currentPosition);
+        this._maybeBroadcastLivePosition();
       },
       (e) => this._emit('error', { message: e.message }),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 }
@@ -39,13 +43,14 @@ class GPSNavigation {
       this.watchId = null;
     }
     this.isTracking = false;
+    this._stopLiveSharing();
     if (this.animFrame) { cancelAnimationFrame(this.animFrame); this.animFrame = null; }
   }
 
   getCurrentPosition() {
     return new Promise((resolve, reject) => {
       if (this.currentPosition) { resolve(this.currentPosition); return; }
-      if (!('geolocation' in navigator)) { reject(new Error('GPS not available on this device')); return; }
+      if (!GPSNavigation.isSupported()) { reject(new Error('GPS not available on this device')); return; }
       navigator.geolocation.getCurrentPosition(
         (p) => {
           this.currentPosition = {
@@ -58,6 +63,34 @@ class GPSNavigation {
         { enableHighAccuracy: true, timeout: 15000 }
       );
     });
+  }
+
+  enableLiveSharing() {
+    this.liveSharingEnabled = true;
+    this._startLiveSharing();
+  }
+
+  disableLiveSharing() {
+    this.liveSharingEnabled = false;
+    this._stopLiveSharing();
+  }
+
+  _startLiveSharing() {
+    this._stopLiveSharing();
+    if (!this.liveSharingEnabled) return;
+    this._liveSharingTimer = setInterval(() => this._maybeBroadcastLivePosition(), this.liveSharingIntervalMs);
+  }
+
+  _stopLiveSharing() {
+    if (this._liveSharingTimer) {
+      clearInterval(this._liveSharingTimer);
+      this._liveSharingTimer = null;
+    }
+  }
+
+  _maybeBroadcastLivePosition() {
+    if (!this.liveSharingEnabled || !this.currentPosition) return;
+    this._emit('live-position', this.currentPosition);
   }
 
   updatePeerLocation(clientId, data) {
@@ -79,6 +112,8 @@ class GPSNavigation {
 
   destroyMap() {
     if (this.animFrame) { cancelAnimationFrame(this.animFrame); this.animFrame = null; }
+    this.canvas = null;
+    this.ctx = null;
   }
 
   zoomIn() { this.scale = Math.min(this.scale * 1.5, 50); }
@@ -95,7 +130,8 @@ class GPSNavigation {
     if (!c || !ctx) return;
     const w = c.width = c.offsetWidth * (window.devicePixelRatio || 1);
     const h = c.height = c.offsetHeight * (window.devicePixelRatio || 1);
-    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+    const dpr = window.devicePixelRatio || 1;
+    if (ctx.setTransform) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const dw = c.offsetWidth, dh = c.offsetHeight;
     const cx = dw / 2, cy = dh / 2;
 
@@ -229,12 +265,32 @@ class GPSNavigation {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
+  _calcBearing(lat1, lng1, lat2, lng2) {
+    const y = Math.sin((lng2 - lng1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
+    const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+      Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lng2 - lng1) * Math.PI / 180);
+    const bearing = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+    return dirs[Math.round(bearing / 45) % 8];
+  }
+
+  latLngToXY(lat, lng, centerLat, centerLng, zoom, canvasWidth, canvasHeight) {
+    const metersPerDegree = 111320;
+    const scale = zoom / metersPerDegree;
+    const dx = (lng - centerLng) * metersPerDegree * Math.cos(centerLat * Math.PI / 180);
+    const dy = (lat - centerLat) * metersPerDegree;
+    return {
+      x: canvasWidth / 2 + dx * scale,
+      y: canvasHeight / 2 - dy * scale
+    };
+  }
+
   formatDistance(m) {
     if (m < 1000) return Math.round(m) + ' m';
     return (m / 1000).toFixed(1) + ' km';
   }
 
-  static isSupported() { return 'geolocation' in navigator; }
+  static isSupported() { return typeof navigator !== 'undefined' && 'geolocation' in navigator; }
 
   on(e, cb) { if (!this._listeners[e]) this._listeners[e] = []; this._listeners[e].push(cb); }
   _emit(e, d) { (this._listeners[e] || []).forEach(cb => { try { cb(d); } catch (er) {} }); }

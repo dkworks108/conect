@@ -1,43 +1,115 @@
 /**
  * Connect Server v2.0 — Production WebSocket + HTTP Server
- * Features: rooms, chat, files, location, WebRTC signaling,
- * rate limiting, persistence, graceful shutdown
  */
+const express = require('express');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
+const qrcode = require('qrcode-terminal');
 
-const PORT = parseInt(process.argv[2]) || 3000;
+const CONFIG = {
+  PORT_RANGE: [3000, 3010],
+  MAX_CONNECTIONS: 200,
+  MAX_ROOMS: 100,
+  MAX_ROOM_MEMBERS: 100,
+  MAX_MESSAGE_LENGTH: 5000,
+  MAX_FILE_SIZE: 50 * 1024 * 1024,
+  PING_INTERVAL: 25000,
+  PONG_TIMEOUT: 10000,
+  RATE_LIMIT_WINDOW: 60000,
+  RATE_LIMIT_MAX: 60,
+  MESSAGE_HISTORY_LIMIT: 100,
+  ROOM_CLEANUP_INTERVAL: 300000,
+  ROOM_EMPTY_TIMEOUT: 3600000,
+  LOG_LEVEL: process.env.LOG_LEVEL || 'INFO',
+  DATA_DIR: path.join(__dirname, 'data'),
+  ROOMS_FILE: path.join(__dirname, 'data', 'rooms.json'),
+  STATE_FILE: path.join(__dirname, 'data', 'server.state.json'),
+  LOG_DIR: path.join(__dirname, 'data', 'logs'),
+  LOG_FILE: path.join(__dirname, 'data', 'logs', 'server.log')
+};
+
 const CLIENT_DIR = path.join(__dirname, '..', 'client');
-const ROOMS_FILE = path.join(__dirname, 'rooms.json');
-const MAX_CONNECTIONS = 50;
-const MAX_HISTORY = 100;
-const MAX_MSG_PER_MIN = 30;
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 const startTime = Date.now();
+const PORT = Number.parseInt(process.argv[2], 10) || CONFIG.PORT_RANGE[0];
 
 // ─── STATE ──────────────────────────────────────
 const clients = new Map();
-let rooms = new Map();
+const rooms = new Map();
+const rateLimiter = new Map();
+const metrics = {
+  connections: 0,
+  roomsCreated: 0,
+  messages: 0,
+  files: 0,
+  errors: 0,
+  reconnects: 0,
+  heartbeats: 0,
+  bytesIn: 0,
+  bytesOut: 0
+};
+
+const app = express();
+app.disable('x-powered-by');
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: false }));
+app.use(express.static(CLIENT_DIR, { maxAge: '1h', etag: true }));
 
 // ─── HELPERS ────────────────────────────────────
-function uid() {
-  return crypto.randomBytes(6).toString('hex');
+function uid(prefix = '') {
+  return `${prefix}${crypto.randomBytes(8).toString('hex')}`;
 }
+
 function shortCode() {
   return crypto.randomBytes(3).toString('hex').toUpperCase().slice(0, 6);
 }
+
 function ts() {
-  return new Date().toISOString().slice(11, 19);
+  return new Date().toISOString();
 }
-function log(msg) {
-  console.log(`[${ts()}] ${msg}`);
+
+function ensureDataDirs() {
+  [CONFIG.DATA_DIR, CONFIG.LOG_DIR].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  });
 }
+
+function log(level, component, message, data = {}) {
+  const entry = {
+    timestamp: ts(),
+    level,
+    component,
+    message,
+    data,
+    uptime: Math.floor(process.uptime()),
+    memoryMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    activeConnections: clients.size
+  };
+  const line = JSON.stringify(entry);
+  console.log(line);
+  try {
+    fs.appendFileSync(CONFIG.LOG_FILE, line + '\n');
+  } catch {
+    // Best-effort logging only.
+  }
+}
+
 function hashPassword(pw) {
-  return crypto.createHash('sha256').update(pw).digest('hex');
+  return crypto.createHash('sha256').update(String(pw)).digest('hex');
+}
+
+function sanitizeText(input, maxLen = CONFIG.MAX_MESSAGE_LENGTH) {
+  return String(input || '')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function sanitizeName(input, maxLen = 50) {
+  return sanitizeText(input, maxLen).replace(/[<>]/g, '');
 }
 
 function getLocalIP() {
@@ -50,20 +122,74 @@ function getLocalIP() {
   return '127.0.0.1';
 }
 
+function cleanupState() {
+  const now = Date.now();
+  rooms.forEach((room, roomId) => {
+    const memberCount = room.clients ? room.clients.size : 0;
+    if (memberCount === 0) {
+      if (!room.emptySince) room.emptySince = now;
+      if (now - room.emptySince >= CONFIG.ROOM_EMPTY_TIMEOUT) {
+        rooms.delete(roomId);
+        log('INFO', 'ROOMS', 'Deleted empty room', { roomId, name: room.name });
+      }
+    } else {
+      room.emptySince = null;
+    }
+
+    if (Array.isArray(room.messages) && room.messages.length > CONFIG.MESSAGE_HISTORY_LIMIT) {
+      room.messages = room.messages.slice(-CONFIG.MESSAGE_HISTORY_LIMIT);
+    }
+
+    if (room.fileBuffers instanceof Map) {
+      for (const [fileId, buffer] of room.fileBuffers.entries()) {
+        if (now - (buffer.startedAt || now) > 30 * 60 * 1000) {
+          room.fileBuffers.delete(fileId);
+        }
+      }
+    }
+  });
+  if (rateLimiter.size > 1000) {
+    rateLimiter.clear();
+  }
+}
+
+function getHostUrl(port) {
+  const ip = getLocalIP();
+  return `http://${ip}:${port}`;
+}
+
+function jsonResponse(res, status, payload) {
+  res.status(status).json(payload);
+}
+
 // ─── PERSISTENCE ────────────────────────────────
 function loadRooms() {
   try {
-    if (fs.existsSync(ROOMS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(ROOMS_FILE, 'utf8'));
-      data.forEach(r => {
-        r.clients = new Set();
-        r.rateLimits = new Map();
-        rooms.set(r.id, r);
+    const legacyFile = path.join(__dirname, 'rooms.json');
+    const sourceFile = fs.existsSync(CONFIG.ROOMS_FILE) ? CONFIG.ROOMS_FILE : legacyFile;
+    if (fs.existsSync(sourceFile)) {
+      const raw = JSON.parse(fs.readFileSync(sourceFile, 'utf8'));
+      const list = Array.isArray(raw) ? raw : raw.rooms || [];
+      list.forEach(r => {
+        rooms.set(r.id, {
+          ...r,
+          clients: new Set(),
+          fileBuffers: new Map(),
+          members: new Map(),
+          messages: Array.isArray(r.messages) ? r.messages.slice(-CONFIG.MESSAGE_HISTORY_LIMIT) : [],
+          hostProfile: r.hostProfile || { displayName: 'Unknown', avatar: '😎', avatarColor: '#00d4ff' },
+          lastActivityAt: r.lastActivityAt || r.createdAt || Date.now(),
+          emptySince: r.emptySince || null
+        });
       });
-      log(`Loaded ${rooms.size} rooms from disk`);
+      metrics.roomsCreated = rooms.size;
+      log('INFO', 'STORAGE', 'Loaded rooms from disk', { count: rooms.size, sourceFile });
+      if (sourceFile === legacyFile && !fs.existsSync(CONFIG.ROOMS_FILE)) {
+        saveRooms();
+      }
     }
   } catch (e) {
-    log('Could not load rooms: ' + e.message);
+    log('ERROR', 'STORAGE', 'Could not load rooms', { error: e.message });
   }
 }
 
@@ -72,20 +198,44 @@ function saveRooms() {
     const arr = [];
     rooms.forEach(r => {
       arr.push({
-        id: r.id, name: r.name, joinCode: r.joinCode,
-        hostId: r.hostId, passwordHash: r.passwordHash || null,
-        isPrivate: r.isPrivate, createdAt: r.createdAt,
-        messages: (r.messages || []).slice(-MAX_HISTORY)
+        id: r.id,
+        name: r.name,
+        joinCode: r.joinCode,
+        hostId: r.hostId,
+        hostProfile: r.hostProfile || null,
+        passwordHash: r.passwordHash || null,
+        isPrivate: !!r.isPrivate,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt || Date.now(),
+        lastActivityAt: r.lastActivityAt || Date.now(),
+        emptySince: r.emptySince || null,
+        mutedMembers: Array.from(r.mutedMembers || []),
+        bannedMembers: Array.from(r.bannedMembers || []),
+        pinnedMessages: Array.from(r.pinnedMessages || []),
+        messages: (r.messages || []).slice(-CONFIG.MESSAGE_HISTORY_LIMIT)
       });
     });
-    fs.writeFileSync(ROOMS_FILE, JSON.stringify(arr, null, 2));
+    ensureDataDirs();
+    fs.writeFileSync(CONFIG.ROOMS_FILE, JSON.stringify({ rooms: arr }, null, 2));
+    fs.writeFileSync(CONFIG.STATE_FILE, JSON.stringify({
+      savedAt: Date.now(),
+      rooms: arr,
+      roomCount: arr.length,
+      activeConnections: clients.size,
+      metrics
+    }, null, 2));
   } catch (e) {
-    log('Could not save rooms: ' + e.message);
+    log('ERROR', 'STORAGE', 'Could not save rooms', { error: e.message });
   }
 }
 
 // Auto-save every 30 seconds
 setInterval(saveRooms, 30000);
+
+setInterval(() => {
+  cleanupState();
+  saveRooms();
+}, CONFIG.ROOM_CLEANUP_INTERVAL).unref();
 
 // ─── MIME TYPES ─────────────────────────────────
 const MIME = {
@@ -107,79 +257,101 @@ const MIME = {
   '.ttf': 'font/ttf',
 };
 
-// ─── HTTP SERVER ────────────────────────────────
-const httpServer = http.createServer((req, res) => {
-  // CORS headers for local network
+function httpRequestLogger(req, res, next) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-
-  // API endpoints
-  if (req.url === '/api/info') {
-    const roomsList = [];
-    rooms.forEach(r => {
-      roomsList.push({ id: r.id, name: r.name, joinCode: r.joinCode, memberCount: r.clients.size });
-    });
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      version: '2.0.0',
-      rooms: roomsList,
-      totalConnections: clients.size,
-      maxConnections: MAX_CONNECTIONS,
-      uptime: Math.floor((Date.now() - startTime) / 1000),
-      serverTime: Date.now()
-    }));
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Admin-Token');
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
     return;
   }
+  next();
+}
 
-  // Static file serving
-  let url = req.url.split('?')[0];
-  if (url === '/') url = '/index.html';
+app.use(httpRequestLogger);
 
-  const filePath = path.join(CLIENT_DIR, url);
-  const safePath = path.resolve(filePath);
-  if (!safePath.startsWith(path.resolve(CLIENT_DIR))) {
-    res.writeHead(403);
-    res.end('Forbidden');
-    return;
-  }
-
-  fs.readFile(safePath, (err, data) => {
-    if (err) {
-      // SPA fallback
-      if (url !== '/index.html') {
-        fs.readFile(path.join(CLIENT_DIR, 'index.html'), (e2, d2) => {
-          if (e2) { res.writeHead(404); res.end('Not Found'); return; }
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' });
-          res.end(d2);
-        });
-        return;
-      }
-      res.writeHead(404);
-      res.end('Not Found');
-      return;
-    }
-    const ext = path.extname(safePath);
-    const mime = MIME[ext] || 'application/octet-stream';
-    const cache = ext === '.html' ? 'no-cache' : 'public, max-age=3600';
-    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': cache });
-    res.end(data);
+app.get('/api/health', (req, res) => {
+  jsonResponse(res, 200, {
+    status: 'ok',
+    uptime: Math.floor(process.uptime()),
+    connections: clients.size,
+    rooms: rooms.size,
+    memoryMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    timestamp: Date.now()
   });
 });
+
+app.get('/api/metrics', (req, res) => {
+  jsonResponse(res, 200, {
+    ...metrics,
+    uptime: Math.floor(process.uptime()),
+    connections: clients.size,
+    rooms: rooms.size,
+    memoryMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+  });
+});
+
+app.get('/api/info', (req, res) => {
+  jsonResponse(res, 200, {
+    version: '2.0.0',
+    rooms: getRoomsList(),
+    totalConnections: clients.size,
+    maxConnections: CONFIG.MAX_CONNECTIONS,
+    uptime: Math.floor((Date.now() - startTime) / 1000),
+    serverTime: Date.now(),
+    host: getHostUrl(currentPort || PORT)
+  });
+});
+
+app.get('/api/rooms', (req, res) => {
+  jsonResponse(res, 200, { rooms: getRoomsList() });
+});
+
+app.get('/api/admin/state', (req, res) => {
+  jsonResponse(res, 200, {
+    rooms: getRoomsList(),
+    activeClients: clients.size,
+    metrics
+  });
+});
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
+  const safePath = path.resolve(path.join(CLIENT_DIR, req.path === '/' ? '/index.html' : req.path));
+  if (!safePath.startsWith(path.resolve(CLIENT_DIR))) {
+    return res.status(403).send('Forbidden');
+  }
+  if (fs.existsSync(safePath) && fs.statSync(safePath).isFile()) {
+    const ext = path.extname(safePath).toLowerCase();
+    const mime = MIME[ext] || 'application/octet-stream';
+    const cache = ext === '.html' ? 'no-cache' : 'public, max-age=3600';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', cache);
+    fs.createReadStream(safePath).pipe(res);
+    return;
+  }
+  const indexPath = path.join(CLIENT_DIR, 'index.html');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache');
+  fs.createReadStream(indexPath).pipe(res);
+});
+
+const httpServer = http.createServer(app);
 
 // ─── WEBSOCKET SERVER ───────────────────────────
 const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', (ws, req) => {
   // Connection limit
-  if (clients.size >= MAX_CONNECTIONS) {
-    sendTo(ws, 'error', { code: 'SERVER_FULL', message: `Server is at capacity (${MAX_CONNECTIONS} devices). Try again later.` });
+  if (clients.size >= CONFIG.MAX_CONNECTIONS) {
+    sendTo(ws, 'error', { code: 'SERVER_FULL', message: `Server is at capacity (${CONFIG.MAX_CONNECTIONS} devices). Try again later.` });
     ws.close();
     return;
   }
 
   const clientId = uid();
   const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-  log(`Client connected: ${clientId} from ${ip}`);
+  log('INFO', 'WS', 'Client connected', { clientId, ip });
 
   ws.isAlive = true;
   ws.clientId = clientId;
@@ -197,13 +369,13 @@ wss.on('connection', (ws, req) => {
         rateLimit.resetAt = now + 60000;
       }
       rateLimit.count++;
-      if (rateLimit.count > MAX_MSG_PER_MIN) {
+      if (rateLimit.count > CONFIG.RATE_LIMIT_MAX) {
         sendTo(ws, 'error', { code: 'RATE_LIMITED', message: 'Too many messages. Slow down.' });
         return;
       }
 
       const rawStr = raw.toString();
-      if (rawStr.length > MAX_FILE_SIZE + 1024) {
+      if (rawStr.length > CONFIG.MAX_FILE_SIZE + 1024) {
         sendTo(ws, 'error', { code: 'MESSAGE_TOO_LARGE', message: 'Message exceeds maximum size.' });
         return;
       }
@@ -216,12 +388,12 @@ wss.on('connection', (ws, req) => {
   });
 
   ws.on('close', () => {
-    log(`Client disconnected: ${clientId}`);
+    log('INFO', 'WS', 'Client disconnected', { clientId });
     handleDisconnect(clientId);
   });
 
   ws.on('error', (err) => {
-    log(`Client error ${clientId}: ${err.message}`);
+    log('ERROR', 'WS', 'Client error', { clientId, error: err.message });
   });
 });
 
@@ -253,11 +425,16 @@ function handleMessage(clientId, ws, msg) {
         roomId: null, joinedAt: Date.now(), lastSeen: Date.now()
       });
       sendTo(ws, 'registered', { clientId, serverVersion: '2.0.0' });
-      log(`Registered: ${profile.displayName} (${clientId})`);
+      log('INFO', 'AUTH', 'Client registered', { clientId, displayName: profile.displayName });
       break;
     }
 
     case 'create-room': {
+      if (rooms.size >= CONFIG.MAX_ROOMS) {
+        sendTo(ws, 'error', { code: 'SERVER_FULL', message: 'Server has reached the maximum number of rooms.' });
+        break;
+      }
+      const client = clients.get(clientId);
       const roomId = uid();
       const joinCode = shortCode();
       let passwordHash = null;
@@ -269,6 +446,7 @@ function handleMessage(clientId, ws, msg) {
         name: String(payload.roomName || 'Unnamed Room').slice(0, 40),
         joinCode,
         hostId: clientId,
+        hostProfile: client?.profile || null,
         passwordHash,
         isPrivate: !!payload.isPrivate,
         clients: new Set(),
@@ -277,7 +455,7 @@ function handleMessage(clientId, ws, msg) {
         createdAt: Date.now()
       };
       rooms.set(roomId, room);
-      log(`Room created: "${room.name}" [${joinCode}] by ${clientId}`);
+      log('INFO', 'ROOMS', 'Room created', { roomId, roomName: room.name, joinCode, hostId: clientId });
       sendTo(ws, 'room-created', { roomId, roomName: room.name, joinCode });
       joinRoom(clientId, ws, roomId);
       broadcastRoomsList();
@@ -298,6 +476,10 @@ function handleMessage(clientId, ws, msg) {
       }
       if (!room) {
         sendTo(ws, 'error', { code: 'ROOM_NOT_FOUND', message: `Room "${target}" not found. Check the code and try again.` });
+        return;
+      }
+      if (room.clients.size >= CONFIG.MAX_ROOM_MEMBERS) {
+        sendTo(ws, 'error', { code: 'ROOM_FULL', message: `This room is full (max ${CONFIG.MAX_ROOM_MEMBERS} members).` });
         return;
       }
       if (room.passwordHash && payload.password) {
@@ -345,8 +527,9 @@ function handleMessage(clientId, ws, msg) {
       };
 
       room.messages.push(chatMsg);
-      if (room.messages.length > MAX_HISTORY) room.messages.shift();
+      if (room.messages.length > CONFIG.MESSAGE_HISTORY_LIMIT) room.messages.shift();
       broadcastToRoom(room.id, 'chat-message', chatMsg);
+      metrics.messages++;
       break;
     }
 
@@ -384,9 +567,10 @@ function handleMessage(clientId, ws, msg) {
       const room = rooms.get(client.roomId);
       if (room) {
         room.messages.push(locMsg);
-        if (room.messages.length > MAX_HISTORY) room.messages.shift();
+        if (room.messages.length > CONFIG.MESSAGE_HISTORY_LIMIT) room.messages.shift();
       }
       broadcastToRoom(client.roomId, 'chat-message', locMsg);
+      metrics.messages++;
       break;
     }
 
@@ -395,7 +579,7 @@ function handleMessage(clientId, ws, msg) {
       if (!client || !client.roomId) return;
       const room = rooms.get(client.roomId);
       if (!room) return;
-      if (payload.fileSize > MAX_FILE_SIZE) {
+      if (payload.fileSize > CONFIG.MAX_FILE_SIZE) {
         sendTo(ws, 'error', { code: 'FILE_TOO_LARGE', message: 'File exceeds 10MB limit.' });
         return;
       }
@@ -456,10 +640,11 @@ function handleMessage(clientId, ws, msg) {
         fileId: payload.fileId, timestamp: Date.now()
       };
       room.messages.push(fileMsg);
-      if (room.messages.length > MAX_HISTORY) room.messages.shift();
+      if (room.messages.length > CONFIG.MESSAGE_HISTORY_LIMIT) room.messages.shift();
       broadcastToRoom(client.roomId, 'file-complete', {
         fileId: payload.fileId, ...fileMsg
       });
+      metrics.files++;
       // Clean up buffer after 5 minutes
       setTimeout(() => { if (room.fileBuffers) room.fileBuffers.delete(payload.fileId); }, 300000);
       break;
@@ -515,7 +700,7 @@ function handleMessage(clientId, ws, msg) {
     }
 
     default:
-      log(`Unknown message type: ${type} from ${clientId}`);
+      log('WARN', 'WS', 'Unknown message type', { type, clientId });
   }
 }
 
@@ -559,7 +744,7 @@ function joinRoom(clientId, ws, roomId) {
   }, clientId);
 
   broadcastRoomsList();
-  log(`${client?.profile?.displayName || clientId} joined "${room.name}" (${room.clients.size} members)`);
+  log('INFO', 'ROOMS', 'Client joined room', { clientId, roomId, roomName: room.name, memberCount: room.clients.size });
 }
 
 function leaveRoom(clientId) {
@@ -573,13 +758,13 @@ function leaveRoom(clientId) {
       displayName: client.profile.displayName,
       memberCount: room.clients.size
     });
-    log(`${client.profile.displayName} left "${room.name}" (${room.clients.size} members)`);
+    log('INFO', 'ROOMS', 'Client left room', { clientId, roomId: room.id, roomName: room.name, memberCount: room.clients.size });
     if (room.clients.size === 0) {
       // Keep room alive for 5 min after last person leaves
       room._deleteTimer = setTimeout(() => {
         if (room.clients.size === 0) {
           rooms.delete(room.id);
-          log(`Room "${room.name}" deleted (empty for 5 min)`);
+          log('INFO', 'ROOMS', 'Room deleted after inactivity', { roomId: room.id, roomName: room.name });
           broadcastRoomsList();
           saveRooms();
         }
@@ -627,7 +812,11 @@ function getRoomsList() {
     list.push({
       id: r.id, name: r.name, joinCode: r.joinCode,
       memberCount: r.clients.size, isPrivate: r.isPrivate,
-      hostId: r.hostId, createdAt: r.createdAt
+      hostId: r.hostId,
+      hostName: r.hostProfile?.displayName || 'Unknown',
+      hostAvatar: r.hostProfile?.avatar || '😎',
+      hostColor: r.hostProfile?.avatarColor || '#00d4ff',
+      createdAt: r.createdAt
     });
   });
   return list;
@@ -636,58 +825,85 @@ function getRoomsList() {
 // ─── STARTUP ────────────────────────────────────
 loadRooms();
 
-httpServer.listen(PORT, '0.0.0.0', () => {
-  const ip = getLocalIP();
-  const url = `http://${ip}:${PORT}`;
+function printBanner(url) {
+  const localUrl = `http://localhost:${currentPort}`;
   const pad = ' '.repeat(Math.max(0, 37 - url.length));
   console.log('');
   console.log('  ╔═══════════════════════════════════════╗');
   console.log('  ║                                       ║');
   console.log('  ║   🔗 Connect Server Running!          ║');
-  console.log(`  ║   Local:   http://localhost:${PORT}      ║`);
+  console.log(`  ║   Local:   ${localUrl}${' '.repeat(Math.max(0, 37 - localUrl.length))}║`);
   console.log(`  ║   Network: ${url}${pad}║`);
-  console.log(`  ║   Port:    ${PORT}                        ║`);
-  console.log('  ║                                       ║');
-  console.log('  ║   Share the Network address with      ║');
-  console.log('  ║   others on the same WiFi!            ║');
+  console.log(`  ║   Port:    ${currentPort}${' '.repeat(Math.max(0, 37 - String(currentPort).length))}║`);
+  console.log(`  ║   Clients: ${clients.size}${' '.repeat(Math.max(0, 37 - String(clients.size).length))}║`);
+  console.log(`  ║   Rooms:   ${rooms.size}${' '.repeat(Math.max(0, 37 - String(rooms.size).length))}║`);
   console.log('  ║                                       ║');
   console.log('  ╚═══════════════════════════════════════╝');
   console.log('');
-
   try {
-    const qr = require('qrcode-terminal');
-    qr.generate(url, { small: true }, (code) => {
-      console.log('  Scan this QR code to connect:\n');
-      console.log(code);
-    });
+    qrcode.generate(url, { small: true });
   } catch (e) {
-    log('Install qrcode-terminal for QR: npm install qrcode-terminal');
+    log('WARN', 'STARTUP', 'qrcode-terminal unavailable', { error: e.message });
   }
+}
 
-  log(`Serving files from: ${CLIENT_DIR}`);
-  log(`Max connections: ${MAX_CONNECTIONS}`);
-  log(`Rate limit: ${MAX_MSG_PER_MIN} msg/min per client`);
-  log('Waiting for connections...');
+function startListening(port) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      httpServer.off('error', onError);
+      reject(err);
+    };
+    httpServer.once('error', onError);
+    httpServer.listen(port, '0.0.0.0', () => {
+      httpServer.off('error', onError);
+      resolve(port);
+    });
+  });
+}
+
+(async () => {
+  ensureDataDirs();
+  for (let port = CONFIG.PORT_RANGE[0]; port <= CONFIG.PORT_RANGE[1]; port++) {
+    try {
+      currentPort = port;
+      await startListening(port);
+      const url = getHostUrl(currentPort);
+      printBanner(url);
+      log('INFO', 'STARTUP', 'Serving files', { directory: CLIENT_DIR });
+      log('INFO', 'STARTUP', 'Max connections', { value: CONFIG.MAX_CONNECTIONS });
+      log('INFO', 'STARTUP', 'Rate limit', { value: CONFIG.RATE_LIMIT_MAX, windowMs: CONFIG.RATE_LIMIT_WINDOW });
+      log('INFO', 'STARTUP', 'Waiting for connections');
+      return;
+    } catch (err) {
+      if (err.code !== 'EADDRINUSE') {
+        log('ERROR', 'STARTUP', 'Failed to start server', { port, error: err.message });
+      }
+    }
+  }
+  throw new Error(`No available port in range ${CONFIG.PORT_RANGE[0]}-${CONFIG.PORT_RANGE[1]}`);
+})().catch((err) => {
+  log('ERROR', 'STARTUP', 'Server start failed', { error: err.message });
+  process.exit(1);
 });
 
 // ─── GRACEFUL SHUTDOWN ──────────────────────────
 function shutdown() {
-  log('Shutting down...');
+  log('INFO', 'SHUTDOWN', 'Shutting down');
   saveRooms();
   wss.clients.forEach(ws => {
     sendTo(ws, 'server-shutdown', { message: 'Server is shutting down' });
     ws.close(1001, 'Server shutdown');
   });
   clearInterval(heartbeat);
-  httpServer.close(() => { log('Server closed cleanly'); process.exit(0); });
+  httpServer.close(() => { log('INFO', 'SHUTDOWN', 'Server closed cleanly'); process.exit(0); });
   setTimeout(() => process.exit(1), 5000);
 }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('uncaughtException', (err) => {
-  log('UNCAUGHT ERROR: ' + err.message);
+  log('ERROR', 'PROCESS', 'Uncaught exception', { error: err.message, stack: err.stack });
   console.error(err.stack);
 });
 process.on('unhandledRejection', (err) => {
-  log('UNHANDLED REJECTION: ' + err);
+  log('ERROR', 'PROCESS', 'Unhandled rejection', { error: String(err) });
 });

@@ -26,6 +26,7 @@ class ConnectApp {
     this.navItems = {};
 
     window.addEventListener('DOMContentLoaded', () => this._init());
+    window.addEventListener('beforeunload', () => this._destroy());
   }
 
   async _init() {
@@ -67,6 +68,12 @@ class ConnectApp {
         }
       });
     }
+
+    this._roomsRefreshTimer = setInterval(() => {
+      if (this.pages.home && this.pages.home.classList.contains('active')) {
+        this._refreshRooms();
+      }
+    }, 5000);
   }
 
   _applySettings() {
@@ -102,15 +109,20 @@ class ConnectApp {
           avatar: document.querySelector('.avatar-option.selected')?.textContent || '😎',
           avatarColor: document.querySelector('.color-option.selected')?.dataset.color || '#00d4ff'
         };
+        const validation = this.profile.validate(data);
+        if (!validation.valid) {
+          this._showToast(validation.errors[0] || 'Invalid profile', 'error');
+          return;
+        }
         
         if (mode === 'create') {
-          this.profile.create(data);
+          this.profile.create(validation.value);
           const serverUrl = document.getElementById('setup-server')?.value || window.location.host;
           this.storage.saveServerUrl(serverUrl);
           this._connect(serverUrl);
           this._navigateTo('home');
         } else {
-          this.profile.update(data);
+          this.profile.update(validation.value);
           this._renderProfile();
           this._navigateTo('profile');
           this._showToast('Profile updated', 'success');
@@ -243,6 +255,39 @@ class ConnectApp {
       });
     }
 
+    // Search Messages
+    const searchBtn = document.getElementById('search-btn');
+    const searchBar = document.getElementById('chat-search-bar');
+    const searchInput = document.getElementById('chat-search-input');
+    if (searchBtn && searchBar && searchInput) {
+      searchBtn.addEventListener('click', () => {
+        const isHidden = searchBar.style.display === 'none';
+        searchBar.style.display = isHidden ? 'block' : 'none';
+        if (isHidden) {
+          searchInput.focus();
+        } else {
+          searchInput.value = '';
+          this._renderMessages(true);
+        }
+      });
+      searchInput.addEventListener('input', (e) => {
+        const q = e.target.value;
+        if (!q.trim()) {
+          this._renderMessages(true);
+          return;
+        }
+        const results = this.chat.search(q);
+        const area = document.getElementById('chat-messages');
+        if (!area) return;
+        area.innerHTML = '';
+        if (results.length === 0) {
+           area.innerHTML = '<div class="empty-state">No messages found.</div>';
+           return;
+        }
+        results.forEach(m => this._appendMessage(m));
+      });
+    }
+
     // Settings listeners
     document.querySelectorAll('.setting-toggle, .setting-select').forEach(el => {
       el.addEventListener('change', (e) => {
@@ -296,9 +341,16 @@ class ConnectApp {
     // Chat List scroll (Virtual / Paginated)
     const chatList = document.getElementById('chat-messages');
     if (chatList) {
-      chatList.addEventListener('scroll', () => {
+      chatList.addEventListener('scroll', async () => {
         if (chatList.scrollTop === 0) {
-          // TODO: implement load older messages
+          const area = chatList;
+          const prevHeight = area.scrollHeight;
+          const added = await this.chat.loadOlderMessages(50);
+          if (added && added.length) {
+            this._prependMessages(added);
+            // Preserve view position
+            area.scrollTop = area.scrollHeight - prevHeight;
+          }
         }
       });
     }
@@ -321,6 +373,11 @@ class ConnectApp {
     this.socket.on('reconnected', () => {
       this._updateHeaderStatus('connected', 'Connected');
       this._showToast('Reconnected successfully', 'success');
+    });
+    this.socket.on('rooms-updated', () => {
+      if (this.pages.home && this.pages.home.classList.contains('active')) {
+        this._refreshRooms();
+      }
     });
 
     // --- Chat Events ---
@@ -357,6 +414,18 @@ class ConnectApp {
 
     this.chat.on('message-status-update', (msg) => {
       this._updateMessageStatusUI(msg);
+    });
+
+    this.chat.on('message-updated', () => {
+      if (this.pages.chat && this.pages.chat.classList.contains('active')) {
+        this._renderMessages(true);
+      }
+    });
+
+    this.chat.on('message-removed', () => {
+      if (this.pages.chat && this.pages.chat.classList.contains('active')) {
+        this._renderMessages(true);
+      }
     });
 
     this.chat.on('typing-changed', () => {
@@ -470,7 +539,7 @@ class ConnectApp {
     div.dataset.msgId = msg.msgId;
 
     if (isSystem) {
-      div.innerHTML = `<div class="system-text">${msg.text}</div>`;
+      div.innerHTML = `<div class="system-text">${ConnectUtils.escapeHTML(msg.text || '')}</div>`;
     } else {
       let contentHtml = '';
       if (msg.type === 'location') {
@@ -478,8 +547,8 @@ class ConnectApp {
           <div class="loc-bubble">
             <div class="loc-icon">📍</div>
             <div class="loc-details">
-              <strong>${msg.senderName}'s Location</strong><br>
-              <small>${msg.lat.toFixed(5)}, ${msg.lng.toFixed(5)}</small>
+              <strong>${ConnectUtils.escapeHTML(msg.senderName || 'Someone')}'s Location</strong><br>
+              <small>${Number(msg.lat).toFixed(5)}, ${Number(msg.lng).toFixed(5)}</small>
             </div>
           </div>
           <div class="loc-actions">
@@ -494,9 +563,9 @@ class ConnectApp {
           const prog = msg.status === 'uploading' ? `<div class="progress-bar"><div id="progress-${msg.fileId}" class="progress-fill" style="width:${msg.progress}%"></div></div>` : '';
           contentHtml = `
             <div class="file-bubble">
-              📎 ${msg.fileName} (${ChatSystem.formatSize(msg.fileSize)})
+              📎 ${ConnectUtils.escapeHTML(msg.fileName || 'file')} (${ChatSystem.formatSize(msg.fileSize)})
               ${prog}
-              ${msg.status === 'received' ? `<button class="btn btn-secondary text-sm mt-sm" onclick="app._downloadFile('${msg.fileId}', '${msg.fileName}')">Download</button>` : ''}
+              ${msg.status === 'received' ? `<button class="btn btn-secondary text-sm mt-sm" onclick="app._downloadFile('${msg.fileId}', '${ConnectUtils.escapeHTML(msg.fileName || 'file')}')">Download</button>` : ''}
             </div>
           `;
         }
@@ -509,7 +578,7 @@ class ConnectApp {
           </div>
         `;
       } else {
-        contentHtml = msg.text.replace(/\n/g, '<br>');
+        contentHtml = ConnectUtils.escapeHTML(msg.text || '').replace(/\n/g, '<br>');
       }
 
       let statusIcon = '';
@@ -521,9 +590,9 @@ class ConnectApp {
       }
 
       div.innerHTML = `
-        ${!isMine ? `<div class="chat-avatar" style="background:${msg.senderColor}">${msg.senderAvatar}</div>` : ''}
+        ${!isMine ? `<div class="chat-avatar" style="background:${msg.senderColor}">${ConnectUtils.escapeHTML(msg.senderAvatar || '')}</div>` : ''}
         <div class="chat-bubble ${isMine ? 'mine' : ''}">
-          ${!isMine ? `<div class="chat-name">${msg.senderName}</div>` : ''}
+          ${!isMine ? `<div class="chat-name">${ConnectUtils.escapeHTML(msg.senderName || '')}</div>` : ''}
           <div class="chat-content">${contentHtml}</div>
           <div class="chat-meta">${ChatSystem.formatTime(msg.timestamp)}${statusIcon}</div>
         </div>
@@ -532,6 +601,81 @@ class ConnectApp {
     
     area.appendChild(div);
     this._scrollToBottom();
+  }
+
+  _prependMessages(msgs) {
+    const area = document.getElementById('chat-messages');
+    if (!area || !msgs || msgs.length === 0) return;
+    msgs.forEach(msg => {
+      const isMine = msg.senderId === this.socket.clientId;
+      const isSystem = msg.type === 'system';
+      const div = document.createElement('div');
+      div.className = `chat-message ${isSystem ? 'system' : (isMine ? 'mine' : 'theirs')} fade-in`;
+      div.dataset.msgId = msg.msgId;
+
+      if (isSystem) {
+        div.innerHTML = `<div class="system-text">${ConnectUtils.escapeHTML(msg.text || '')}</div>`;
+      } else {
+        let contentHtml = '';
+        if (msg.type === 'location') {
+          contentHtml = `
+            <div class="loc-bubble">
+              <div class="loc-icon">📍</div>
+              <div class="loc-details">
+                <strong>${ConnectUtils.escapeHTML(msg.senderName || 'Someone')}'s Location</strong><br>
+                <small>${Number(msg.lat).toFixed(5)}, ${Number(msg.lng).toFixed(5)}</small>
+              </div>
+            </div>
+            <div class="loc-actions">
+              <a href="https://maps.google.com/?q=${msg.lat},${msg.lng}" target="_blank" class="btn btn-secondary text-sm">🗺️ Maps</a>
+            </div>
+          `;
+        } else if (msg.type === 'file') {
+          const isImage = msg.fileType && msg.fileType.startsWith('image/');
+          if (isImage && msg._localData) {
+            contentHtml = `<img src="data:${msg.fileType};base64,${msg._localData}" class="chat-img" alt="Image">`;
+          } else {
+            const prog = msg.status === 'uploading' ? `<div class="progress-bar"><div id="progress-${msg.fileId}" class="progress-fill" style="width:${msg.progress}%"></div></div>` : '';
+            contentHtml = `
+              <div class="file-bubble">
+                  📎 ${ConnectUtils.escapeHTML(msg.fileName || 'file')} (${ChatSystem.formatSize(msg.fileSize)})
+                ${prog}
+                  ${msg.status === 'received' ? `<button class="btn btn-secondary text-sm mt-sm" onclick="app._downloadFile('${msg.fileId}', '${ConnectUtils.escapeHTML(msg.fileName || 'file')}')">Download</button>` : ''}
+              </div>
+            `;
+          }
+        } else if (msg.type === 'voice') {
+          contentHtml = `
+            <div class="voice-bubble">
+              <button class="play-btn" onclick="app.audio.playVoiceMessage('${msg.audioData}')">▶</button>
+              <div class="voice-waveform"></div>
+              <span class="voice-dur">${WebRTCManager.formatDuration(msg.audioDuration)}</span>
+            </div>
+          `;
+        } else {
+            contentHtml = ConnectUtils.escapeHTML(msg.text || '').replace(/\n/g, '<br>');
+        }
+
+        let statusIcon = '';
+        if (isMine) {
+          if (msg.status === 'sending') statusIcon = ' ⏳';
+          else if (msg.status === 'sent') statusIcon = ' ✓';
+          else if (msg.status === 'delivered') statusIcon = ' ✓✓';
+          else if (msg.status === 'read') statusIcon = ' <span style="color:#00d4ff">✓✓</span>';
+        }
+
+        div.innerHTML = `
+          ${!isMine ? `<div class="chat-avatar" style="background:${msg.senderColor}">${ConnectUtils.escapeHTML(msg.senderAvatar || '')}</div>` : ''}
+          <div class="chat-bubble ${isMine ? 'mine' : ''}">
+            ${!isMine ? `<div class="chat-name">${ConnectUtils.escapeHTML(msg.senderName || '')}</div>` : ''}
+            <div class="chat-content">${contentHtml}</div>
+            <div class="chat-meta">${ChatSystem.formatTime(msg.timestamp)}${statusIcon}</div>
+          </div>
+        `;
+      }
+
+      area.insertBefore(div, area.firstChild);
+    });
   }
 
   _updateMessageStatusUI(msg) {
@@ -568,6 +712,16 @@ class ConnectApp {
     if (area) area.scrollTop = area.scrollHeight;
   }
 
+  _destroy() {
+    if (this._roomsRefreshTimer) {
+      clearInterval(this._roomsRefreshTimer);
+      this._roomsRefreshTimer = null;
+    }
+    this.socket.disconnect();
+    this.gps.stopTracking();
+    this.webrtc.endCall();
+  }
+
   async _refreshRooms() {
     const list = document.getElementById('rooms-list');
     if (!list) return;
@@ -590,11 +744,13 @@ class ConnectApp {
     rooms.forEach(r => {
       const div = document.createElement('div');
       div.className = 'network-card';
+      const createdLabel = r.createdAt ? ChatSystem.formatDate(r.createdAt) : 'Recently';
       div.innerHTML = `
-        <div class="network-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg></div>
+        <div class="network-icon" style="background:${r.hostColor || '#00d4ff'}">${r.hostAvatar || '😎'}</div>
         <div class="network-info">
-          <div class="network-name">${r.name}</div>
-          <div class="network-meta">${r.memberCount} members · Code: ${r.joinCode} ${r.isPrivate ? '🔒' : ''}</div>
+          <div class="network-name">${ConnectUtils.escapeHTML(r.name || '')}</div>
+            <div class="network-meta">${r.memberCount} members · ${ConnectUtils.escapeHTML(r.hostName || 'Unknown')} · ${createdLabel} ${r.isPrivate ? '🔒' : ''}</div>
+            <div class="network-meta">Code: ${ConnectUtils.escapeHTML(r.joinCode || '')}</div>
         </div>
         <button class="join-btn">Join</button>
       `;
@@ -617,9 +773,9 @@ class ConnectApp {
     const info = this.profile.getDeviceInfo();
     const html = `
       <div style="text-align:center; padding: 20px">
-        <div class="avatar xl" style="background:${p.avatarColor}; margin:0 auto 16px">${p.avatar}</div>
-        <h2 style="margin-bottom:8px">${p.displayName}</h2>
-        <p class="text-muted" style="margin-bottom:16px">${p.statusMessage || 'Available'}</p>
+        <div class="avatar xl" style="background:${p.avatarColor}; margin:0 auto 16px">${ConnectUtils.escapeHTML(p.avatar || '')}</div>
+        <h2 style="margin-bottom:8px">${ConnectUtils.escapeHTML(p.displayName || '')}</h2>
+        <p class="text-muted" style="margin-bottom:16px">${ConnectUtils.escapeHTML(p.statusMessage || 'Available')}</p>
         <button id="edit-profile-btn" class="btn btn-secondary">Edit Profile</button>
       </div>
       <div class="glass-card mt-sm">
@@ -702,7 +858,7 @@ class ConnectApp {
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.innerHTML = `
-      <span>${message}</span>
+      <span>${ConnectUtils.escapeHTML(message)}</span>
       <button class="toast-close">✕</button>
     `;
     container.appendChild(toast);

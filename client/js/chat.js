@@ -53,7 +53,9 @@ class ChatSystem {
 
       const msg = { ...payload, status: 'received' };
       this.messages.push(msg);
-      this.storage.saveMessage(this.currentRoomId, msg);
+      this.storage.saveMessage(this.currentRoomId, msg).then(() => {
+        if (this.messages.length % 50 === 0) this.storage.trimMessages(this.currentRoomId, 500);
+      });
       this._emit('new-message', msg);
 
       // Send read receipt if we're viewing the chat
@@ -70,7 +72,7 @@ class ChatSystem {
         const timeout = setTimeout(() => {
           this.typingUsers.delete(payload.clientId);
           this._emit('typing-changed');
-        }, 4000);
+        }, 5000);
         this.typingUsers.set(payload.clientId, { name: payload.displayName, timeout });
       } else {
         const existing = this.typingUsers.get(payload.clientId);
@@ -156,6 +158,35 @@ class ChatSystem {
       });
     });
 
+    this.socket.on('message-edited', (payload) => {
+      const msg = this.messages.find(m => m.msgId === payload.msgId);
+      if (!msg) return;
+      msg.text = payload.text;
+      msg.edited = true;
+      msg.editedAt = payload.editedAt || Date.now();
+      this.storage.saveMessage(this.currentRoomId, msg);
+      this._emit('message-updated', msg);
+    });
+
+    this.socket.on('message-deleted', (payload) => {
+      const msg = this.messages.find(m => m.msgId === payload.msgId);
+      if (!msg) return;
+      msg.deleted = true;
+      msg.deletedAt = payload.deletedAt || Date.now();
+      msg.type = 'system';
+      msg.text = payload.text || '🚫 Message deleted';
+      this.storage.saveMessage(this.currentRoomId, msg);
+      this._emit('message-updated', msg);
+    });
+
+    this.socket.on('message-reacted', (payload) => {
+      const msg = this.messages.find(m => m.msgId === payload.msgId);
+      if (!msg) return;
+      msg.reactions = payload.reactions || msg.reactions || {};
+      this.storage.saveMessage(this.currentRoomId, msg);
+      this._emit('message-updated', msg);
+    });
+
     this.socket.on('server-shutdown', () => {
       this._emit('server-shutdown');
       this.currentRoomId = null;
@@ -233,6 +264,7 @@ class ChatSystem {
     this.typingUsers.clear();
     this.peerLocations.clear();
     this._fileChunks.clear();
+    clearTimeout(this.typingTimeout);
     this._emit('room-left');
   }
 
@@ -260,6 +292,54 @@ class ChatSystem {
       replyTo: replyToId
     });
     return optimistic;
+  }
+
+  editMessage(msgId, text) {
+    const msg = this.messages.find(m => m.msgId === msgId && m.senderId === this.socket.clientId);
+    if (!msg || msg.type !== 'text') return false;
+    const nextText = String(text || '').trim().slice(0, 5000);
+    if (!nextText) return false;
+    msg.text = nextText;
+    msg.edited = true;
+    msg.editedAt = Date.now();
+    this.storage.saveMessage(this.currentRoomId, msg);
+    this.socket.send('edit-message', { roomId: this.currentRoomId, msgId, text: nextText });
+    this._emit('message-updated', msg);
+    return true;
+  }
+
+  deleteMessage(msgId, scope = 'me') {
+    const msg = this.messages.find(m => m.msgId === msgId);
+    if (!msg) return false;
+    if (scope === 'me') {
+      this.messages = this.messages.filter(m => m.msgId !== msgId);
+      this.storage.saveMessage(this.currentRoomId, { ...msg, deletedForMe: true });
+      this._emit('message-removed', { msgId, scope });
+      return true;
+    }
+    if (msg.senderId !== this.socket.clientId) return false;
+    this.socket.send('delete-message', { roomId: this.currentRoomId, msgId });
+    return true;
+  }
+
+  toggleReaction(msgId, emoji) {
+    if (!this.messages.find(m => m.msgId === msgId)) return false;
+    this.socket.send('react-message', { roomId: this.currentRoomId, msgId, emoji });
+    return true;
+  }
+
+  forwardMessage(msgId, targetRoomId) {
+    if (!this.messages.find(m => m.msgId === msgId) || !targetRoomId) return false;
+    this.socket.send('forward-message', { roomId: this.currentRoomId, targetRoomId, msgId });
+    return true;
+  }
+
+  pinMessage(msgId) {
+    this.socket.send('pin-message', { roomId: this.currentRoomId, msgId });
+  }
+
+  unpinMessage(msgId) {
+    this.socket.send('unpin-message', { roomId: this.currentRoomId, msgId });
   }
 
   // ─── SEND FILE ────────────────────────────────
@@ -398,7 +478,7 @@ class ChatSystem {
     clearTimeout(this.typingTimeout);
     this.typingTimeout = setTimeout(() => {
       this.socket.send('typing', { roomId: this.currentRoomId, isTyping: false });
-    }, 3000);
+    }, 500);
   }
 
   // ─── QUERY ────────────────────────────────────
@@ -423,6 +503,30 @@ class ChatSystem {
     if (!query.trim()) return this.messages;
     const q = query.toLowerCase();
     return this.messages.filter(m => m.text && m.text.toLowerCase().includes(q));
+  }
+
+  // Load older messages from local storage and prepend them to the in-memory list.
+  // This requests a slightly larger window from storage and deduplicates against
+  // the current in-memory messages. Returns an array of newly loaded messages
+  // (older messages) or an empty array if none were found.
+  async loadOlderMessages(limit = 50) {
+    if (!this.currentRoomId) return [];
+    try {
+      const totalWanted = (this.messages.length || 0) + limit;
+      const msgs = await this.storage.loadMessages(this.currentRoomId, totalWanted);
+      if (!msgs || msgs.length === 0) return [];
+
+      const existingIds = new Set(this.messages.map(m => m.msgId));
+      const newMsgs = msgs.filter(m => m.msgId && !existingIds.has(m.msgId));
+      if (newMsgs.length === 0) return [];
+
+      // Ensure the new messages are sorted oldest -> newest, then prepend
+      newMsgs.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      this.messages = [...newMsgs, ...this.messages];
+      return newMsgs;
+    } catch (e) {
+      return [];
+    }
   }
 
   // ─── EVENT EMITTER ────────────────────────────

@@ -32,6 +32,6 @@ if not exist node_modules\ (
 )
 
 echo Starting server...
-node server.js
+call npm start
 
 pause

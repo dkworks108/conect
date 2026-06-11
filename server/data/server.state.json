@@ -1,0 +1,17 @@
+{
+  "savedAt": 1781204342026,
+  "rooms": [],
+  "roomCount": 0,
+  "activeConnections": 0,
+  "metrics": {
+    "connections": 0,
+    "roomsCreated": 0,
+    "messages": 0,
+    "files": 0,
+    "errors": 0,
+    "reconnects": 0,
+    "heartbeats": 0,
+    "bytesIn": 0,
+    "bytesOut": 0
+  }
+}

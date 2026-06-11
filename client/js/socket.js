@@ -140,10 +140,6 @@ class SocketManager {
       try {
         await this.connect(this.httpUrl || this.serverUrl, this.profile);
         this._emit('reconnected', {});
-        // Re-join last room
-        if (this._lastRoomId) {
-          this.send('join-room', { roomId: this._lastRoomId });
-        }
       } catch (e) {
         this._attemptReconnect();
       }

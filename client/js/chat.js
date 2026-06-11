@@ -117,6 +117,12 @@ class ChatSystem {
       this._emit('member-left', payload);
     });
 
+    this.socket.on('reconnected', () => {
+      if (this.currentRoomId && !this._pendingJoin) {
+        this.socket.send('join-room', { roomId: this.currentRoomId });
+      }
+    });
+
     this.socket.on('room-joined', async (payload) => {
       this.currentRoomId = payload.roomId;
       this.currentRoomName = payload.roomName;
@@ -245,15 +251,46 @@ class ChatSystem {
   }
 
   async joinRoom(roomId, password = null) {
+    this._pendingJoin = { roomId, password };
     return new Promise((resolve) => {
       let resolved = false;
       const reqId = 'req_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-      const handler = (data) => { if (resolved) return; if (data._reqId !== reqId) return; resolved = true; this.socket.off('room-joined', handler); this.socket.off('error', errH); resolve({ success: true, ...data }); };
-      const errH = (data) => { if (resolved) return; if (data._reqId !== reqId) return; resolved = true; this.socket.off('room-joined', handler); this.socket.off('error', errH); resolve({ success: false, error: data.message }); };
+      this._pendingJoin._reqId = reqId;
+
+      const handler = (data) => { 
+        if (resolved) return; 
+        if (data._reqId !== reqId) return; 
+        resolved = true; 
+        this._pendingJoin = null;
+        this.socket.off('room-joined', handler); 
+        this.socket.off('error', errH); 
+        resolve({ success: true, ...data }); 
+      };
+      const errH = (data) => { 
+        if (resolved) return; 
+        if (data._reqId !== reqId) return; 
+        resolved = true; 
+        this._pendingJoin = null;
+        this.socket.off('room-joined', handler); 
+        this.socket.off('error', errH); 
+        resolve({ success: false, error: data.message }); 
+      };
+      
       this.socket.on('room-joined', handler);
       this.socket.on('error', errH);
-      this.socket.send('join-room', { roomId, password, _reqId: reqId });
-      setTimeout(() => { if (!resolved) { resolved = true; this.socket.off('room-joined', handler); this.socket.off('error', errH); resolve({ success: false, error: 'Timed out joining room' }); } }, 10000);
+      this.socket.send('join-room', this._pendingJoin);
+      
+      if (this.socket.connected) {
+        setTimeout(() => { 
+          if (!resolved) { 
+            resolved = true; 
+            this._pendingJoin = null;
+            this.socket.off('room-joined', handler); 
+            this.socket.off('error', errH); 
+            resolve({ success: false, error: 'Timed out joining room' }); 
+          } 
+        }, 10000);
+      }
     });
   }
 
@@ -267,8 +304,10 @@ class ChatSystem {
     this.joinCode = null;
     this.members.clear();
     this.messages = [];
+    this.typingUsers.forEach(u => clearTimeout(u.timeout));
     this.typingUsers.clear();
     this.peerLocations.clear();
+    this._fileChunks.forEach(f => { if (f.timeoutId) clearTimeout(f.timeoutId); });
     this._fileChunks.clear();
     clearTimeout(this.typingTimeout);
     this._emit('room-left');

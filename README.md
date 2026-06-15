@@ -1,4 +1,4 @@
-# Connect PWA - Local Mesh Network Chat 🚀
+# Connect PWA - Local Mesh Network Chat Application 🚀
 
 Connect is a high-performance, offline-first Progressive Web App (PWA) designed for local mesh networking. It allows users on the same WiFi/Hotspot to communicate instantly via WebSockets and WebRTC without needing an internet connection.
 

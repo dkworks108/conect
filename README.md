@@ -45,7 +45,7 @@ connect/
 
 ## 📱 How to Connect (Client Devices)
 
-**Requirement:** All devices must be connected to the same Local Area Network (WiFi router or Mobile Hotspot).
+**Requirement:** All devices must be a connected to the same Local Area Network (WiFi router or Mobile Hotspot).
 
 **Option A: QR Code (Fastest)**
 1.  Open your smartphone's camera.

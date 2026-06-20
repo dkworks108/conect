@@ -59,7 +59,7 @@ connect/
 
 ## 🔧 PWA Installation
 
-Once the app is open in your browser, you can install it as a native app:
+Once the app is open in your browser, you can install it as a native app in :
 *   **Android (Chrome):** Tap the 3-dot menu > "Install App" or "Add to Home screen".
 *   **iOS (Safari):** Tap the Share button (square with an up arrow) > "Add to Home Screen".
 

@@ -55,7 +55,7 @@ connect/
 **Option B: Manual IP Entry**
 1.  On the host machine's terminal, look for the "Network IP" (e.g., `http://192.168.1.5:3000`).
 2.  Open a browser on any other device on the network.
-3.  Type that exact URL into the address bar.
+3.  Type that exact URL into the address bar at device. 
 
 ## 🔧 PWA Installation
 

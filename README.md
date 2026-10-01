@@ -66,6 +66,6 @@ Once the app is open in your browser, you can install it as a native app in your
 ## 🛡️ Privacy & Security
 
 *   Data remains entirely on your local network.
-*   All things 
+*   All things remains safe as it is.
 *   There are no external database dependencies.
 *   The application functions completely without an active internet connection (requires LAN only).

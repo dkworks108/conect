@@ -1,6 +1,6 @@
 # Connect PWA - Local Mesh Network Chat in Application 
 
-Connect is a high-performance, offline-first Progressive Web App (PWA) designed for local mesh networking. It allows users on the same WiFi/Hotspot to communicate instantly via WebSockets and WebRTC without needing an internet connection.
+Connect is a high-performance, offline-first Progressive Web App (PWA) designed for local mesh networking. It allows users on the same WiFi/Hotspot to communicate instantly via WebSockets and WebRTC without needing ann internet connection.
 
 ## 🌟 Features
 
